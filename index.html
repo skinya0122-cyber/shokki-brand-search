@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>食器AIブランドサーチ（試作 v2.3.4）</title>
+<title>食器AIブランドサーチ（試作 v2.3.5）</title>
 <style>
 :root{ --bg:#f7f5f2; --card:#fff; --ink:#22201d; --muted:#6f6a63; --line:#e3ded6;
 --accent:#7a4a21; --accent2:#f0e6da; --warn:#9a3412; --warnbg:#fdf0e9; --ok:#166534; --okbg:#ecfdf3;}
@@ -73,7 +73,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 </head>
 <body>
 <header>
-<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.4</span></h1>
+<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.5</span></h1>
 <p>食器の柄とバックスタンプからブランド・シリーズを特定し、中古販売の価格帯を表示します。事実と推測を分けて表示し、正確な買取価格の算出は行いません。</p>
 </header>
 <main>
@@ -105,6 +105,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 <h2><span class="step">2</span>ブランドを検索</h2>
 <p class="hint">写真2枚を追加したら押してください。表面の柄とバックスタンプを照合して、ブランド候補（最大3件）を表示します。初回だけ、下の「詳細設定」でAPIキーの入力が必要です。</p>
 <button id="btnGemini" type="button" style="font-size:19px;padding:16px">🔍 ブランドを検索</button>
+<button id="btnReset" type="button" class="sub">↺ 新しい商品を検索する（リセット）</button>
 <div id="status"></div>
 <div id="cooldownNote" class="small"></div>
 <div id="retryArea" style="display:none">
@@ -237,7 +238,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 
 </main>
 
-<footer>試作 v2.3.4 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
+<footer>試作 v2.3.5 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -283,6 +284,21 @@ const out = cv.toDataURL('image/jpeg', 0.8);
 return (out && out.startsWith('data:image/jpeg')) ? out : null;
 }catch(e){ return null; }
 }
+function clearItemResults(){
+$('factSurface').value = ''; $('factBackstamp').value = ''; $('factLogo').value = '';
+$('candidates').innerHTML = ''; $('candidates').appendChild(candidateEl());
+$('priceRows').innerHTML = '';
+priceEstimate = null; renderPriceEst();
+currentKeywords = []; $('searchLinks').innerHTML = '';
+stampComparison = null; lastStampInfo = { used: false, count: 0, brands: [] };
+const pg = $('photoGuide'); pg.style.display = 'none'; pg.innerHTML = '';
+renderBand();
+}
+function invalidateForNewPhotos(){
+clearItemResults();
+$('result').innerHTML = '<p class="small">写真が変更されたため、前の検索結果は無効になりました。「ブランドを検索」を押すと、表示中の写真だけで検索します。</p>';
+lastSummary = ''; $('btnCopy').disabled = true;
+}
 function photoNote(key, text, isWarn){
 const el = $(key === 'surface' ? 'noteSurface' : 'noteBack');
 if(!el) return;
@@ -300,6 +316,7 @@ const sig = (f.name || '') + '|' + f.size + '|' + (f.lastModified || 0);
 const now = Date.now();
 if(sig === lastSig && now - lastAt < 2000) return; // inputとchangeの二重発火を間引く
 lastSig = sig; lastAt = now;
+invalidateForNewPhotos();
 const fname = f.name || '写真';
 photoNote(key, label + ': 読み込み中…（' + fname + '）');
 // まずブラウザ内の一時URLで即座にプレビューする（大きな写真でも表示されやすい）
@@ -725,9 +742,9 @@ let text = json.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('')
 text = text.replace(/```json|```/g, '').trim();
 const data = JSON.parse(text);
 const f = data.observed_facts || {};
-if(Array.isArray(f.surface)) $('factSurface').value = f.surface.join('\n');
-if(f.backstamp_text) $('factBackstamp').value = f.backstamp_text;
-if(f.backstamp_logo) $('factLogo').value = f.backstamp_logo;
+$('factSurface').value = Array.isArray(f.surface) ? f.surface.join('\n') : '';
+$('factBackstamp').value = f.backstamp_text || '';
+$('factLogo').value = f.backstamp_logo || '';
 $('candidates').innerHTML = '';
 (data.identification_candidates || []).slice(0,3).forEach(c => $('candidates').appendChild(candidateEl(c)));
 if(!$('candidates').children.length) $('candidates').appendChild(candidateEl());
@@ -775,6 +792,20 @@ refreshGeminiUi();
 }
 }
 $('btnGemini').addEventListener('click', runGemini);
+$('btnReset').addEventListener('click', () => {
+const ok = (typeof window.confirm === 'function') ? window.confirm('写真・検索結果・候補を初期化して、新しい商品の検索を始めますか？\n（見本ライブラリ・保存データ・バックアップ・APIキーは消えません）') : true;
+if(!ok) return;
+images.surface = null; images.back = null;
+$('imgSurface').style.display = 'none'; $('imgBack').style.display = 'none';
+$('fileSurface').value = ''; $('fileBack').value = '';
+photoNote('surface', '表面: まだ登録されていません'); photoNote('back', '裏面: まだ登録されていません');
+clearItemResults();
+$('result').innerHTML = ''; lastSummary = ''; $('btnCopy').disabled = true;
+$('condition').value = '1.0'; document.querySelectorAll('.dmg').forEach(x => x.checked = false);
+tempSample = null; $('samplePreview').style.display = 'none'; $('sampleNote').textContent = '見本: まだ選ばれていません';
+$('status').textContent = '初期化しました。新しい商品の写真を追加してください。';
+scheduleSave();
+});
 $('btnRetry').addEventListener('click', runGemini);
 $('btnSwitchRetry').addEventListener('click', () => {
 $('modelPreset').value = GEMINI_ALT_MODEL;
@@ -1237,7 +1268,7 @@ applyRestore(JSON.parse(raw));
 }catch(e){ if(!$('candidates').children.length) $('candidates').appendChild(candidateEl()); }
 })();
 
-$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.4';
+$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.5';
 $('bootCheck').style.background = '#e9f9ee';
 $('bootCheck').style.borderColor = '#7bc47f';
 </script>
