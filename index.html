@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>食器AIブランドサーチ（試作 v2.3.2）</title>
+<title>食器AIブランドサーチ（試作 v2.3.3）</title>
 <style>
 :root{ --bg:#f7f5f2; --card:#fff; --ink:#22201d; --muted:#6f6a63; --line:#e3ded6;
 --accent:#7a4a21; --accent2:#f0e6da; --warn:#9a3412; --warnbg:#fdf0e9; --ok:#166534; --okbg:#ecfdf3;}
@@ -73,7 +73,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 </head>
 <body>
 <header>
-<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.2</span></h1>
+<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.3</span></h1>
 <p>食器の柄とバックスタンプからブランド・シリーズを特定し、中古販売の価格帯を表示します。事実と推測を分けて表示し、正確な買取価格の算出は行いません。</p>
 </header>
 <main>
@@ -228,14 +228,16 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 <h3>バックアップ（ファイル）</h3>
 <p class="hint">閲覧環境によっては端末内保存（localStorage / IndexedDB）が制限され、保存できない場合があります。その場合は、入力内容と見本画像をファイルに書き出しておき、次回そのファイルを読み込むことで復元できます。APIキーはバックアップファイルに含まれません。写真と見本画像が含まれるため、ファイルの取り扱いにはご注意ください。</p>
 <button class="sub" id="btnExport" type="button">バックアップを書き出す（ファイルに保存）</button>
-<label for="importFile">バックアップを読み込む</label>
-<input type="file" id="importFile" accept=".json,application/json">
+<label>バックアップを読み込む</label>
+<button class="sub" id="btnImport" type="button">ファイルを選んで読み込む</button>
+<input type="file" id="importFile" accept="application/json,.json" style="margin-top:8px">
+<p class="small">上のボタンで選択画面が開かない場合は、この「ファイルを選択」欄を直接タップしてください。読み込みの前に確認画面が出ます（現在のデータは確認なしに置き換わりません）。</p>
 <div id="backupStatus" class="small" style="margin-top:6px"></div>
 </details>
 
 </main>
 
-<footer>試作 v2.3.2 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
+<footer>試作 v2.3.3 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -1154,23 +1156,38 @@ setTimeout(() => { try{ URL.revokeObjectURL(url); }catch(e){} }, 4000);
 $('backupStatus').textContent = 'バックアップを書き出しました（APIキーは含まれていません）。';
 }catch(e){ $('backupStatus').textContent = 'バックアップを書き出せませんでした（' + (e && e.name ? e.name : 'エラー') + '）。'; }
 });
-$('importFile').addEventListener('change', e => {
-const f = e.target.files && e.target.files[0];
-if(!f) return;
+$('btnImport').addEventListener('click', () => {
+try{ $('importFile').click(); }
+catch(e){ $('backupStatus').textContent = 'ファイル選択を開けませんでした。下の「ファイルを選択」欄を直接タップしてください。'; }
+});
+let importBusy = false;
+function handleImportFile(f){
+if(!f || importBusy) return;
+importBusy = true;
+const done = () => { importBusy = false; $('importFile').value = ''; };
+if(f.size === 0){ $('backupStatus').textContent = '読み込み失敗: ファイルが空です。書き出したバックアップファイル（.json）を選び直してください。'; done(); return; }
 const r = new FileReader();
-r.onerror = () => { $('backupStatus').textContent = 'バックアップファイルを読み込めませんでした。'; };
+r.onerror = () => { $('backupStatus').textContent = '読み込み失敗: ファイルを読み込めませんでした。もう一度お試しください。'; done(); };
 r.onload = () => {
 try{
-const s = JSON.parse(String(r.result || ''));
-if(!s || typeof s !== 'object' || !('images' in s || 'stampSamples' in s || 'candidates' in s || 'resultHtml' in s || 'backupVersion' in s)) throw new Error('形式が違います');
+let s;
+try{ s = JSON.parse(String(r.result || '')); }
+catch(pe){ $('backupStatus').textContent = '読み込み失敗: JSONとして読み込めませんでした。バックアップファイル（.json）を選び直してください。'; done(); return; }
+if(!s || typeof s !== 'object' || !('images' in s || 'stampSamples' in s || 'candidates' in s || 'resultHtml' in s || 'backupVersion' in s)){
+$('backupStatus').textContent = '読み込み失敗: このファイルは、このアプリのバックアップではないようです。書き出したファイルを選び直してください。'; done(); return;
+}
+const ok = (typeof window.confirm === 'function') ? window.confirm('現在の入力内容と見本は、バックアップの内容で置き換わります。読み込んでよろしいですか？') : true;
+if(!ok){ $('backupStatus').textContent = '読み込みを中止しました（現在のデータはそのままです）。'; done(); return; }
 applyRestore(s);
 saveNow(false);
 $('backupStatus').textContent = 'バックアップを読み込みました。' + (storageMode === 'none' ? 'この環境では端末内に保存できないため、画面を閉じると消えます。' : '');
-}catch(err){ $('backupStatus').textContent = 'このファイルはバックアップとして読み込めませんでした。'; }
+}catch(err){ $('backupStatus').textContent = '読み込み失敗: ' + (err && err.message ? err.message : '不明なエラー') + '。ファイルが壊れている可能性があります。'; }
+done();
 };
 r.readAsText(f);
-e.target.value = '';
-});
+}
+$('importFile').addEventListener('change', e => handleImportFile(e.target.files && e.target.files[0]));
+$('importFile').addEventListener('input', e => handleImportFile(e.target.files && e.target.files[0]));
 function applyRestore(s){
 if(!s || typeof s !== 'object'){ if(!$('candidates').children.length) $('candidates').appendChild(candidateEl()); return; }
 try{
@@ -1207,7 +1224,7 @@ applyRestore(JSON.parse(raw));
 }catch(e){ if(!$('candidates').children.length) $('candidates').appendChild(candidateEl()); }
 })();
 
-$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.2';
+$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.3';
 $('bootCheck').style.background = '#e9f9ee';
 $('bootCheck').style.borderColor = '#7bc47f';
 </script>
