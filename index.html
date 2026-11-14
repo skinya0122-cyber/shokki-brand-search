@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>食器AIブランドサーチ（試作 v2.3.3）</title>
+<title>食器AIブランドサーチ（試作 v2.3.4）</title>
 <style>
 :root{ --bg:#f7f5f2; --card:#fff; --ink:#22201d; --muted:#6f6a63; --line:#e3ded6;
 --accent:#7a4a21; --accent2:#f0e6da; --warn:#9a3412; --warnbg:#fdf0e9; --ok:#166534; --okbg:#ecfdf3;}
@@ -73,7 +73,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 </head>
 <body>
 <header>
-<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.3</span></h1>
+<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.4</span></h1>
 <p>食器の柄とバックスタンプからブランド・シリーズを特定し、中古販売の価格帯を表示します。事実と推測を分けて表示し、正確な買取価格の算出は行いません。</p>
 </header>
 <main>
@@ -237,7 +237,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 
 </main>
 
-<footer>試作 v2.3.3 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
+<footer>試作 v2.3.4 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -408,6 +408,11 @@ div.innerHTML = `
 </div>
 <label>商品名候補</label>
 <input type="text" class="c-product" value="${data.product_name||data.product||''}" placeholder="不明なら空欄">
+<label>柄・商品名の推定（シリーズとは別）</label>
+<input type="text" class="c-pattern" value="${data.pattern_name||data.pattern||''}" placeholder="例: 赤濃牡丹絵（分からなければ空欄）">
+<label>柄・商品名の確信度</label>
+<div class="conf-wrap"><input type="range" class="c-pconf" min="0" max="100" step="5" value="${data.pattern_confidence?? data.patternConfidence?? 0}">
+<span class="conf-val3">${data.pattern_confidence?? data.patternConfidence?? 0}%</span></div>
 <label>産地・焼き物の種類</label>
 <input type="text" class="c-origin" value="${data.origin||''}" placeholder="例: 有田焼（産地だけ分かる場合はこちらへ。窯元は上のメーカー候補に）">
 <div class="row2">
@@ -429,6 +434,8 @@ const range = div.querySelector('.c-conf'), val = div.querySelector('.conf-val')
 range.addEventListener('input', () => val.textContent = range.value + '%');
 const srange = div.querySelector('.c-sconf'), sval = div.querySelector('.conf-val2');
 srange.addEventListener('input', () => sval.textContent = srange.value + '%');
+const prange = div.querySelector('.c-pconf'), pval = div.querySelector('.conf-val3');
+prange.addEventListener('input', () => pval.textContent = prange.value + '%');
 div.querySelector('.del').addEventListener('click', () => { div.remove(); scheduleSave();});
 return div;
 }
@@ -440,13 +447,15 @@ maker: div.querySelector('.c-maker').value.trim(),
 origin: div.querySelector('.c-origin').value.trim(),
 series: div.querySelector('.c-series').value.trim(),
 product: div.querySelector('.c-product').value.trim(),
+pattern: div.querySelector('.c-pattern').value.trim(),
+patternConfidence: Number(div.querySelector('.c-pconf').value),
 confidence: Number(div.querySelector('.c-conf').value),
 basis: div.querySelector('.c-basis').value.trim(),
 country: div.querySelector('.c-country').value.trim(),
 era: div.querySelector('.c-era').value.trim(),
 seriesConfidence: Number(div.querySelector('.c-sconf').value),
 uncertainty: div.querySelector('.c-unc').value.trim()
-})).filter(c => c.maker || c.origin || c.series || c.product);
+})).filter(c => c.maker || c.origin || c.series || c.product || c.pattern);
 }
 
 /* ---------- 価格帯 ---------- */
@@ -579,7 +588,7 @@ return band;
 }
 
 /* ---------- Gemini（任意） ---------- */
-const SYSTEM_PROMPT = `あなたは食器のブランド特定の補助AIです。ルール: (1)写真で確認できることだけを事実とする。読み取れた文字（バックスタンプの転記）とAIの推測は厳密に分ける。画像に写っていない文字や特徴を作り出さない (2)表面の柄・形状とバックスタンプ（文字・ロゴ・製造国表記）を必ず照合し、矛盾があれば uncertainty と contradicting_evidence に明記する (3)バックスタンプの読み取り手順: 漢字の銘、崩し字、窯印、手書きの文字を1文字ずつ確認し、実際に読み取れた文字だけを backstamp_text に転記する。判読できない文字は推測で補わず、その位置に[読取不可]と入れる。窯印やロゴは、文字として読めなくても、輪郭の形、文字や図形の配置（縦書き・横書き、行数）、線の特徴を backstamp_logo に具体的に書く。文字が不鮮明な場合は needs_additional_photos に具体的な撮り直し方法（例: バックスタンプに近づいてピントを合わせる、反射を避けて斜めから撮る）を書く (4)表面の分析: 技法（染付、色絵、印判など）、文様（花、鳥、植物、幾何学模様など）、色の組み合わせ、金彩・金縁の有無、カップやソーサーなど器の形状、絵付けの筆致や特徴を observed_facts.surface に具体的に書く。形状の特徴は shape_and_size_notes に書く (5)日本の陶磁器ブランドの検討: 源右衛門窯、香蘭社、深川製磁、ノリタケ、大倉陶園、その他の有田焼・伊万里焼の窯元を候補の検討対象とする。ただしこれは検討対象の例示であり、写真で確認できた根拠がないブランドを候補に入れない。各候補の basis には、読み取れた文字、窯印・ロゴの形状、表面の特徴のうち、実際に写真で確認できたものを具体的に書く (6)バックスタンプが判読できない場合でも、(4)の表面特徴の組み合わせを根拠に候補を最大3件まで出してよい。その場合の確信度の目安: 一般的な有田様式など様式だけが根拠なら brand_confidence は40未満に抑える。読み取れた文字の一部と表面特徴が一致すれば40〜69とする。銘が明確に読み取れて表面とも矛盾がなければ70以上とする。一般的な柄だけで特定の窯元と断定しない (7)ブランドとシリーズは別々に判定する。シリーズ名は、そのシリーズの特徴的な柄と写真の柄を照合できた場合にのみ確信度を上げる。ブランドが特定できてもシリーズが曖昧なら series_confidence を低くし、series は null にするか uncertainty に「シリーズ未確認」と書く。有名シリーズの名前を根拠なく当てはめない (8)候補は確信度順に最大3件。確信度が低くても、写真で確認できた根拠がある候補は省略せず identification_candidates に入れる（表示側で低確信度候補として区別される）。写真に基づく根拠がまったくない場合は候補に入れず、理由を unreadable_or_uncertain に書く (9)製造国と推定年代も分かる範囲で示す (10)価格帯の推定は「中古販売価格」を前提とし、price_band_estimate.unit に対象単位を書く（カップ＆ソーサーは1客、プレートは1枚など。不明な場合は「単位不明」と書く）。セット販売の価格や新品価格を1点の価格として扱わない。推定の根拠が弱い場合は price_band_estimate を null にする (11)産地と窯元は分けて判定する。各候補の origin には産地・焼き物の種類（例: 有田焼）を、maker にはブランド・窯元名を入れる。産地だけが分かり窯元が特定できない場合は maker を null にし origin だけを入れる（産地をブランド名として扱わない） (12)見本画像が添付されている場合は stamp_comparison で見本ごとに比較する。比較項目は、銘の文字の形状、文字の配置と向き、筆の線の特徴、印の色、高台内での銘の位置とする。文字が判読できない場合も形状の類似性を検討する。各見本について verdict（類似／一部類似／類似点なし／判定不能のいずれか）、similarity（0〜100の数値。AIの主観的な類似度であり、正解確率ではない）、common_points（一致する特徴）、differing_points（一致しない特徴）、judgment（参考候補などの判定と追加確認の要否）、uncertainty を書く。見本のブランド名ラベルは登録者が付けたもので、出典の確認状況によっては未検証でありうるため、ラベルを根拠に一致と判定せず、画像の特徴だけで比較する。青い手書き銘や一般的な絵柄が似ているだけでは同じ窯元と断定せず、その場合は similarity を低くし、differing_points と uncertainty に理由を書く。同一ブランドの見本が複数ある場合は見本ごとに比較し、1枚と一致しないだけでそのブランドを候補から除外しない。見本画像が添付されていない場合は stamp_comparison.used を false とし results は空配列にする (13)見本との類似だけで price_band_estimate の金額や候補の確信度を上げない。ブランド・窯元が不明（maker が null）の場合は価格推定の根拠が弱いため、price_band_estimate を null にするか、候補の uncertainty にその旨を書く (14)出力は次のJSONのみ: {"observed_facts":{"surface":[],"backstamp_text":"","backstamp_logo":"","shape_and_size_notes":[]},"unreadable_or_uncertain":[],"identification_candidates":[{"maker":null,"origin":null,"series":null,"product_name":null,"country":null,"era_estimate":null,"basis":[],"contradicting_evidence":[],"brand_confidence":0,"series_confidence":0,"uncertainty":""}],"needs_additional_photos":[],"search_queries":[],"stamp_comparison":{"used":false,"results":[{"brand":null,"verdict":"","similarity":null,"common_points":[],"differing_points":[],"judgment":"","uncertainty":""}]},"price_band_estimate":{"low":0,"high":0,"unit":"対象単位","per_item":true,"note":"推定の根拠"}}`;
+const SYSTEM_PROMPT = `あなたは食器のブランド特定の補助AIです。ルール: (1)写真で確認できることだけを事実とする。読み取れた文字（バックスタンプの転記）とAIの推測は厳密に分ける。画像に写っていない文字や特徴を作り出さない (2)表面の柄・形状とバックスタンプ（文字・ロゴ・製造国表記）を必ず照合し、矛盾があれば uncertainty と contradicting_evidence に明記する。ブランドの判定ではバックスタンプの文字・ロゴ・形状を最も重視し、表面の柄だけでブランドを決めない (3)バックスタンプの読み取り手順: 漢字の銘、崩し字、窯印、手書きの文字を1文字ずつ確認し、実際に読み取れた文字だけを backstamp_text に転記する。判読できない文字は推測で補わず、その位置に[読取不可]と入れる。窯印やロゴは、文字として読めなくても、輪郭の形、文字や図形の配置（縦書き・横書き、行数）、線の特徴を backstamp_logo に具体的に書く。文字が不鮮明な場合は needs_additional_photos に具体的な撮り直し方法（例: バックスタンプに近づいてピントを合わせる、反射を避けて斜めから撮る）を書く (4)表面の分析: 技法（染付、色絵、印判など）、文様（花、鳥、植物、幾何学模様など）、色の組み合わせ、金彩・金縁の有無、カップやソーサーなど器の形状、絵付けの筆致や特徴を observed_facts.surface に具体的に書く。形状の特徴は shape_and_size_notes に書く (5)日本の陶磁器ブランドの検討: 源右衛門窯、香蘭社、深川製磁、ノリタケ、大倉陶園、その他の有田焼・伊万里焼の窯元を候補の検討対象とする。ただしこれは検討対象の例示であり、写真で確認できた根拠がないブランドを候補に入れない。各候補の basis には、読み取れた文字、窯印・ロゴの形状、表面の特徴のうち、実際に写真で確認できたものを具体的に書く (6)バックスタンプが判読できない場合でも、(4)の表面特徴の組み合わせを根拠に候補を最大3件まで出してよい。その場合の確信度の目安: 一般的な有田様式など様式だけが根拠なら brand_confidence は40未満に抑える。読み取れた文字の一部と表面特徴が一致すれば40〜69とする。銘が明確に読み取れて表面とも矛盾がなければ70以上とする。一般的な柄だけで特定の窯元と断定しない (7)ブランドとシリーズは別々に判定する。シリーズ名は、そのシリーズの特徴的な柄と写真の柄を照合できた場合にのみ確信度を上げる。ブランドが特定できてもシリーズが曖昧なら series_confidence を低くし、series は null にするか uncertainty に「シリーズ未確認」と書く。有名シリーズの名前を根拠なく当てはめない。また、シリーズとは別に、表面の文様から推定できる柄名・商品名（例: 赤濃牡丹絵のような、技法と文様を組み合わせた呼び名）を pattern_name に入れ、その確信度を pattern_confidence に入れる。柄名は、文様の種類・色・技法・構図とバックスタンプの情報を組み合わせて推定する。確証がない場合は pattern_confidence を50未満にし、根拠が乏しい場合は pattern_name を null にする。牡丹が描かれている等の一般的な文様だけで特定の商品名を断定しない (8)候補は確信度順に最大3件。確信度が低くても、写真で確認できた根拠がある候補は省略せず identification_candidates に入れる（表示側で低確信度候補として区別される）。写真に基づく根拠がまったくない場合は候補に入れず、理由を unreadable_or_uncertain に書く (9)製造国と推定年代も分かる範囲で示す (10)価格帯の推定は「中古販売価格」を前提とし、price_band_estimate.unit に対象単位を書く（カップ＆ソーサーは1客、プレートは1枚など。不明な場合は「単位不明」と書く）。セット販売の価格や新品価格を1点の価格として扱わない。推定の根拠が弱い場合は price_band_estimate を null にする。柄名・商品名まで推定できた場合はその情報も推定の参考にしてよいが、note にはAIの参考推定であることと、実際の成約相場を検索したものではないことを明記する。出品サイトの商品タイトルなど外部の情報は入力されていないため、それらを根拠にしない (11)産地と窯元は分けて判定する。各候補の origin には産地・焼き物の種類（例: 有田焼）を、maker にはブランド・窯元名を入れる。産地だけが分かり窯元が特定できない場合は maker を null にし origin だけを入れる（産地をブランド名として扱わない） (12)見本画像が添付されている場合は stamp_comparison で見本ごとに比較する。比較項目は、銘の文字の形状、文字の配置と向き、筆の線の特徴、印の色、高台内での銘の位置とする。文字が判読できない場合も形状の類似性を検討する。各見本について verdict（類似／一部類似／類似点なし／判定不能のいずれか）、similarity（0〜100の数値。AIの主観的な類似度であり、正解確率ではない）、common_points（一致する特徴）、differing_points（一致しない特徴）、judgment（参考候補などの判定と追加確認の要否）、uncertainty を書く。見本のブランド名ラベルは登録者が付けたもので、出典の確認状況によっては未検証でありうるため、ラベルを根拠に一致と判定せず、画像の特徴だけで比較する。青い手書き銘や一般的な絵柄が似ているだけでは同じ窯元と断定せず、その場合は similarity を低くし、differing_points と uncertainty に理由を書く。同一ブランドの見本が複数ある場合は見本ごとに比較し、1枚と一致しないだけでそのブランドを候補から除外しない。見本画像が添付されていない場合は stamp_comparison.used を false とし results は空配列にする (13)見本との類似だけで price_band_estimate の金額や候補の確信度を上げない。ブランド・窯元が不明（maker が null）の場合は価格推定の根拠が弱いため、price_band_estimate を null にするか、候補の uncertainty にその旨を書く (14)出力は次のJSONのみ: {"observed_facts":{"surface":[],"backstamp_text":"","backstamp_logo":"","shape_and_size_notes":[]},"unreadable_or_uncertain":[],"identification_candidates":[{"maker":null,"origin":null,"series":null,"pattern_name":null,"pattern_confidence":0,"product_name":null,"country":null,"era_estimate":null,"basis":[],"contradicting_evidence":[],"brand_confidence":0,"series_confidence":0,"uncertainty":""}],"needs_additional_photos":[],"search_queries":[],"stamp_comparison":{"used":false,"results":[{"brand":null,"verdict":"","similarity":null,"common_points":[],"differing_points":[],"judgment":"","uncertainty":""}]},"price_band_estimate":{"low":0,"high":0,"unit":"対象単位","per_item":true,"note":"推定の根拠"}}`;
 
 /* モデル定義はここ一箇所だけ。選択肢・切替ボタン・診断はすべてこの一覧から作る */
 const MODELS = [
@@ -955,7 +964,8 @@ if(!cands.length) h += '<p><b>特定できません</b>。根拠のある候補�
 if(cands.length && Math.max(...cands.map(c => c.confidence || 0)) < 40) h += '<p><b>ブランドは特定できていません。</b>以下は根拠のある低確信度候補です（候補の表示は特定成功ではありません）。</p>';
 cands.forEach((c, ix) => {
 const seriesDisp =!c.series? '未確認': (c.seriesConfidence < 50? `未確認（候補: ${esc(c.series)}・確信度が低いため断定しない）`: esc(c.series));
-h += `<p><b>候補${ix+1}（${brandTierLabel(c.confidence || 0)}）: ${esc(c.maker) || '未特定（窯元名不詳）'} ／ ${seriesDisp} ${esc(c.product)}</b><br>ブランド確信度 ${c.confidence}%／シリーズ確信度 ${c.seriesConfidence}%<br>産地・焼き物の種類: ${esc(c.origin) || '不明'}／製造国: ${esc(c.country) || '不明'}／推定年代: ${esc(c.era) || '不明'}<br>判定理由: ${esc(c.basis) || '未入力'}${c.uncertainty? '<br>不確実な点: ' + esc(c.uncertainty): ''}</p>`;});
+const patternDisp =!c.pattern? '未確認': ((c.patternConfidence || 0) < 50? `未確認（候補: ${esc(c.pattern)}・柄の確信度${c.patternConfidence || 0}%のため断定しない）`: `${esc(c.pattern)}（柄の確信度${c.patternConfidence || 0}%・推定）`);
+h += `<p><b>候補${ix+1}（${brandTierLabel(c.confidence || 0)}）: ${esc(c.maker) || '未特定（窯元名不詳）'} ／ ${seriesDisp} ${esc(c.product)}</b><br>ブランド確信度 ${c.confidence}%／シリーズ確信度 ${c.seriesConfidence}%<br>産地・焼き物の種類: ${esc(c.origin) || '不明'}／製造国: ${esc(c.country) || '不明'}／推定年代: ${esc(c.era) || '不明'}<br>柄・商品名: ${patternDisp}<br>判定理由: ${esc(c.basis) || '未入力'}${c.uncertainty? '<br>不確実な点: ' + esc(c.uncertainty): ''}</p>`;});
 if(cands.length) h += '<p class="small">※ AIの確信度は推定値であり、実際の正解確率を保証するものではありません。</p>';
 h += `<h3>写真から確認できた事実</h3><p>表面の柄・形状: ${esc(facts.surface) || '―'}<br>バックスタンプ: ${esc(facts.back) || '―'}<br>ロゴ: ${esc(facts.logo) || '―'}</p>`;
 h += '<h3>窯印画像照合</h3>';
@@ -971,11 +981,13 @@ h += `<p><b>参考見本: ${esc(r.brand) || '―'}</b><br>照合結果: ${esc(r.
 h += '<h3>AI参考中古販売価格帯と3,000円判定</h3>';
 if(band) h += `<p><b>${band.low.toLocaleString()} 〜 ${band.high.toLocaleString()} 円</b>（対象単位: ${esc(band.unit || '単位不明')}）<br>根拠: ${esc(band.basis)}<br><b>判定: ${tier.name}</b></p>`;
 else h += '<p><b>判定: 価格不明・要確認</b>（確認した成約価格もAI参考推定もありません）</p>';
+if(band && cands[0] && cands[0].pattern) h += `<p class="small">柄・商品名の推定（${esc(cands[0].pattern)}）も価格推定の参考に含めています。これはAI参考推定であり、実際の成約相場を検索したものではありません。</p>`;
 $('result').innerHTML = h;
 const lines = [''];
 cands.forEach((c, ix) => {
 const sTxt =!c.series? '未確認': (c.seriesConfidence < 50? `未確認（候補:${c.series}）`: c.series);
-lines.push(`候補${ix+1}（${brandTierLabel(c.confidence || 0)}）: ${c.maker || '未特定'} ／ ${sTxt} ${c.product}（産地: ${c.origin || '不明'}／ブランド確信度${c.confidence}%／シリーズ確信度${c.seriesConfidence}%／製造国: ${c.country || '不明'}／年代: ${c.era || '不明'}）判定理由: ${c.basis || '未入力'}${c.uncertainty? '／不確実: ' + c.uncertainty: ''}`);});
+const pTxt =!c.pattern? '未確認': ((c.patternConfidence || 0) < 50? `未確認（候補:${c.pattern}・柄確信度${c.patternConfidence || 0}%）`: `${c.pattern}（柄確信度${c.patternConfidence || 0}%・推定）`);
+lines.push(`候補${ix+1}（${brandTierLabel(c.confidence || 0)}）: ${c.maker || '未特定'} ／ ${sTxt} ${c.product}（産地: ${c.origin || '不明'}／ブランド確信度${c.confidence}%／シリーズ確信度${c.seriesConfidence}%／製造国: ${c.country || '不明'}／年代: ${c.era || '不明'}／柄・商品名: ${pTxt}）判定理由: ${c.basis || '未入力'}${c.uncertainty? '／不確実: ' + c.uncertainty: ''}`);});
 if(!cands.length) lines.push('候補: 特定できません');
 if(cands.length) lines.push('※ 確信度はAIの推定値で、実際の正解確率を保証するものではありません。候補の表示はブランド特定成功ではありません。');
 lines.push(`事実: 表面=${facts.surface || '―'}／バックスタンプ=${facts.back || '―'}／ロゴ=${facts.logo || '―'}`);
@@ -983,6 +995,7 @@ if(!lastStampInfo || !lastStampInfo.used) lines.push('窯印画像照合: 未実
 else if(sres.length) sres.forEach(r => lines.push(`窯印画像照合: 参考見本=${r.brand || '―'}／結果=${r.verdict || '―'}${(r.similarity != null && r.similarity !== '') ? `／類似度=${r.similarity}（AIの主観的な類似度で正解確率ではない）` : ''}／共通点=${(r.common_points || []).join('・') || '―'}／相違点=${(r.differing_points || []).join('・') || '―'}／判定=${r.judgment || '―'}${r.uncertainty ? '／不確実: ' + r.uncertainty : ''}`));
 else lines.push('窯印画像照合: 見本を送信したが照合結果が返らなかった');
 lines.push(band? `価格帯（中古）: ${band.low.toLocaleString()}〜${band.high.toLocaleString()}円［${band.basis}／単位: ${band.unit || '単位不明'}］ 判定: ${tier.name}`: '価格帯: 価格不明 判定: 価格不明・要確認');
+if(band && cands[0] && cands[0].pattern) lines.push(`価格推定の参考: 柄・商品名の推定（${cands[0].pattern}）を含むAI参考推定です。実際の成約相場を検索したものではありません。`);
 $('btnCopy').disabled = false;
 lastSummary = lines.join('\n');
 }
@@ -1000,7 +1013,7 @@ v: 2,
 facts: { surface: $('factSurface').value, back: $('factBackstamp').value, logo: $('factLogo').value},
 candidates: [...document.querySelectorAll('.candidate')].map(div => ({
 maker: div.querySelector('.c-maker').value, origin: div.querySelector('.c-origin').value, series: div.querySelector('.c-series').value,
-product_name: div.querySelector('.c-product').value, confidence: Number(div.querySelector('.c-conf').value),
+product_name: div.querySelector('.c-product').value, pattern_name: div.querySelector('.c-pattern').value, patternConfidence: Number(div.querySelector('.c-pconf').value), confidence: Number(div.querySelector('.c-conf').value),
 basis: div.querySelector('.c-basis').value, country: div.querySelector('.c-country').value, era: div.querySelector('.c-era').value, seriesConfidence: Number(div.querySelector('.c-sconf').value), uncertainty: div.querySelector('.c-unc').value
 })),
 priceRows: [...document.querySelectorAll('.price-row')].map(div => ({
@@ -1224,7 +1237,7 @@ applyRestore(JSON.parse(raw));
 }catch(e){ if(!$('candidates').children.length) $('candidates').appendChild(candidateEl()); }
 })();
 
-$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.3';
+$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.4';
 $('bootCheck').style.background = '#e9f9ee';
 $('bootCheck').style.borderColor = '#7bc47f';
 </script>
