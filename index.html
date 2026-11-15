@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>食器AIブランドサーチ（試作 v2.3.9）</title>
+<title>食器AIブランドサーチ（試作 v2.3.10）</title>
 <style>
 :root{ --bg:#f7f5f2; --card:#fff; --ink:#22201d; --muted:#6f6a63; --line:#e3ded6;
 --accent:#7a4a21; --accent2:#f0e6da; --warn:#9a3412; --warnbg:#fdf0e9; --ok:#166534; --okbg:#ecfdf3;}
@@ -73,7 +73,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 </head>
 <body>
 <header>
-<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.9</span></h1>
+<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.10</span></h1>
 <p>食器の柄とバックスタンプからブランド・シリーズを特定し、中古販売の価格帯を表示します。事実と推測を分けて表示し、正確な買取価格の算出は行いません。</p>
 </header>
 <main>
@@ -238,7 +238,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 
 </main>
 
-<footer>試作 v2.3.9 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
+<footer>試作 v2.3.10 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -1046,6 +1046,17 @@ window.__diag = { state: diagState, setModel, diagGenerate };
 
 /* ---------- 結果 ---------- */
 function brandTierLabel(conf){ return conf >= 70 ? '有力候補' : (conf >= 40 ? '参考候補' : '低確信度候補'); }
+function valueAlertDetails(cands, band){
+const top = (cands && cands.length) ? cands[0] : null;
+const basisTxt = top ? (top.basis || '未入力') : '候補がないため、判定根拠はありません';
+let seriesTxt;
+if(!top) seriesTxt = '未確認（候補なし）';
+else if(!top.series) seriesTxt = '未確認';
+else if((top.seriesConfidence || 0) < 50) seriesTxt = `未確認（候補: ${top.series}・確信度が低いため断定しない）`;
+else seriesTxt = `${top.series}（シリーズ確信度${top.seriesConfidence}%・推定であり確定ではありません）`;
+const priceTxt = band ? `${band.low.toLocaleString()}〜${band.high.toLocaleString()}円（${band.basis}）` : '価格不明（表示できる参考価格はありません）';
+return { basisTxt, seriesTxt, priceTxt };
+}
 let lastSummary = '';
 function renderResult(){
 const facts = { surface: $('factSurface').value.trim(), back: $('factBackstamp').value.trim(), logo: $('factLogo').value.trim()};
@@ -1058,7 +1069,7 @@ if(lastItemType) h += `<p><b>商品種類: ${esc(lastItemType.type)}</b>${lastIt
 if(lastCategory) h += `<p><b>分類: ${esc(lastCategory.type)}</b>${lastCategory.basis? '（' + esc(lastCategory.basis) + '）': ''}${(antiqueRisk && lastCategory.type === '現代のブランド食器') ? ' ※ただし古陶磁器の可能性が残るため要確認' : ''}</p>`;
 if(stampIncomplete()) h += `<p class="small">注意: バックスタンプは完全には読み取れていません。読み取れなかった文字や推測で補った文字は、確定情報ではありません。</p>`;
 if(antiquePossible()) h += `<div class="box box-warn"><b>古陶磁器・高額品の可能性があります。一般的な中古食器と異なる価値が付く場合があるため、専門家による確認を推奨します。</b><br><span class="small">※ これは高額品と断定する表示ではありません。製造年代・窯元・真贋は確定できていません。</span>${(antiqueRisk && antiqueRiskReasons.length) ? '<br><span class="small">アプリ側の安全チェック: ' + esc(antiqueRiskReasons.join('／')) + 'ため、AIの分類・価格より慎重に扱っています。</span>' : ''}</div>`;
-if(lastValueAlert && lastValueAlert.possible){ const topConf = cands.length ? Math.max(...cands.map(c => c.confidence || 0)) : 0; const stateTxt = topConf >= 70 ? '有力なブランド候補がありますが、ブランドはまだ確定していません。候補の根拠を確認のうえ、必要に応じて専門家にも確認してください。' : (topConf >= 40 ? 'ブランド候補はありますが、特定には至っていません。追加撮影や専門家への確認をおすすめします。' : 'ブランドは特定できていません。追加撮影や専門家への確認をおすすめします。'); h += `<div class="box box-warn"><b>高額ブランドの可能性・要確認</b><br>${esc(lastValueAlert.reason || '')}<br><span class="small">${stateTxt}</span></div>`; }
+if(lastValueAlert && lastValueAlert.possible){ const topConf = cands.length ? Math.max(...cands.map(c => c.confidence || 0)) : 0; const stateTxt = topConf >= 70 ? '有力なブランド候補がありますが、ブランドはまだ確定していません。候補の根拠を確認のうえ、必要に応じて専門家にも確認してください。' : (topConf >= 40 ? 'ブランド候補はありますが、特定には至っていません。追加撮影や専門家への確認をおすすめします。' : 'ブランドは特定できていません。追加撮影や専門家への確認をおすすめします。'); const vad = valueAlertDetails(cands, band); h += `<div class="box box-warn"><b>高額ブランドの可能性・要確認</b><br>${esc(lastValueAlert.reason || '')}<br><span class="small">ブランドの判定根拠: ${esc(vad.basisTxt)}<br>シリーズ: ${esc(vad.seriesTxt)}<br>参考価格: ${esc(vad.priceTxt)}<br>${stateTxt}</span></div>`; }
 if(!cands.length) h += '<p><b>特定できません</b>。根拠のある候補がありません。追加撮影の案内に沿って撮り直すか、詳細設定から候補を手入力してください。</p>';
 if(cands.length && Math.max(...cands.map(c => c.confidence || 0)) < 40) h += '<p><b>ブランドは特定できていません。</b>以下は根拠のある低確信度候補です（候補の表示は特定成功ではありません）。</p>';
 cands.forEach((c, ix) => {
@@ -1099,7 +1110,7 @@ if(lastCategory) lines.push(`分類: ${lastCategory.type}${lastCategory.basis? '
 if(antiquePossible()) lines.push('警告: 古陶磁器・高額品の可能性があります。一般的な中古食器と異なる価値が付く場合があるため、専門家による確認を推奨します。（高額品と断定する表示ではありません）');
 if(antiqueRisk && antiqueRiskReasons.length) lines.push('安全チェック: ' + antiqueRiskReasons.join('／'));
 if(stampIncomplete()) lines.push('注意: バックスタンプは完全には読み取れていません（読み取れなかった文字は確定情報ではありません）');
-if(lastValueAlert && lastValueAlert.possible){ const topConf2 = cands.length ? Math.max(...cands.map(c => c.confidence || 0)) : 0; lines.push(`高額ブランドの可能性・要確認: ${lastValueAlert.reason || ''}（${topConf2 >= 70 ? '有力なブランド候補あり・未確定' : 'ブランドは未特定'}）`); }
+if(lastValueAlert && lastValueAlert.possible){ const topConf2 = cands.length ? Math.max(...cands.map(c => c.confidence || 0)) : 0; const vad2 = valueAlertDetails(cands, band); lines.push(`高額ブランドの可能性・要確認: ${lastValueAlert.reason || ''}（${topConf2 >= 70 ? '有力なブランド候補あり・未確定' : 'ブランドは未特定'}）`); lines.push(`　ブランドの判定根拠: ${vad2.basisTxt}`); lines.push(`　シリーズ: ${vad2.seriesTxt}`); lines.push(`　参考価格: ${vad2.priceTxt}`); }
 if(!lastStampInfo || !lastStampInfo.used) lines.push('窯印画像照合: 未実施（見本未登録のため通常のAI認識のみ）');
 else if(sres.length) sres.forEach(r => lines.push(`窯印画像照合: 参考見本=${r.brand || '―'}／結果=${r.verdict || '―'}${(r.similarity != null && r.similarity !== '') ? `／類似度=${r.similarity}（AIの主観的な類似度で正解確率ではない）` : ''}／共通点=${(r.common_points || []).join('・') || '―'}／相違点=${(r.differing_points || []).join('・') || '―'}／判定=${r.judgment || '―'}${r.uncertainty ? '／不確実: ' + r.uncertainty : ''}`));
 else if(sresAll.length) lines.push('窯印画像照合: 対象と合わない見本のため照合結果は表示していない（対象外）');
@@ -1354,7 +1365,7 @@ applyRestore(JSON.parse(raw));
 }catch(e){ if(!$('candidates').children.length) $('candidates').appendChild(candidateEl()); }
 })();
 
-$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.9';
+$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.10';
 $('bootCheck').style.background = '#e9f9ee';
 $('bootCheck').style.borderColor = '#7bc47f';
 </script>
