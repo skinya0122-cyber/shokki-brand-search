@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>食器AIブランドサーチ（試作 v2.3.13）</title>
+<title>食器AIブランドサーチ（試作 v2.3.15）</title>
 <style>
 :root{ --bg:#f7f5f2; --card:#fff; --ink:#22201d; --muted:#6f6a63; --line:#e3ded6;
 --accent:#7a4a21; --accent2:#f0e6da; --warn:#9a3412; --warnbg:#fdf0e9; --ok:#166534; --okbg:#ecfdf3;}
@@ -73,7 +73,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 </head>
 <body>
 <header>
-<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.13</span></h1>
+<h1>🍽 食器AIブランドサーチ <span class="small">試作 v2.3.15</span></h1>
 <p>食器の柄とバックスタンプからブランド・シリーズを特定し、中古販売の価格帯を表示します。事実と推測を分けて表示し、正確な買取価格の算出は行いません。</p>
 <p class="small">このツールはAIによるブランド・商品情報の推定を補助するものです。窯元・真贋・参考価格の正確性は保証しません。売買や買取の判断前に必ずご自身で確認してください。</p>
 </header>
@@ -223,10 +223,15 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 <p class="small">同一ブランドの見本が複数ある場合は、それぞれと比較します（1枚と一致しなくても、そのブランドを除外しません）。目安は1ブランド3〜5枚までです。見本が多いと保存容量を超える場合があり、その場合は保存時に警告が出ます。</p>
 
 <h3>保存</h3>
-<p class="hint">入力は自動で保存されます（この端末の中だけ）。あとから開き直しても復元されます。写真と見本画像は縮小して保存します。APIキーは保存されません。起動時に保存できる環境かを確認し、使えない場合はその旨とバックアップの案内を下に表示します（保存できないのに「保存しました」とは表示しません）。容量が足りない場合は、結果テキスト→写真→見本の順に保存対象を絞って再試行し、保存できなかったものを下に表示します（画面上のデータは消えません）。</p>
+<p class="hint">入力は自動で保存されます（この端末の中だけ）。あとから開き直しても復元されます。写真と見本画像は縮小して保存します。APIキーは保存されません。起動時に保存できる環境かを確認し、使えない場合はその旨とバックアップの案内を下に表示します（保存できないのに「保存しました」とは表示しません）。容量が足りない場合は、結果テキスト→写真→見本の順に保存対象を絞って再試行し、保存できなかったものを下に表示します（画面上のデータは消えません）。作業中のデータと保存済み査定履歴は別の保存場所に分けて保存され、リセットで履歴は消えません。</p>
 <button class="sub" id="btnSave" type="button">今すぐ保存する</button>
 <button class="danger" id="btnClearSave" type="button">保存した内容を消去する</button>
 <div id="saveStatus"></div>
+<h3>保存済み査定履歴</h3>
+<p class="hint">「今すぐ保存する」を押すと、その時点の査定結果が履歴に1件追加されます（同じ内容は重複して追加されません）。履歴は作業中のデータとは別の保存場所にあり、リセットや自動保存では消えません。再読み込みや開き直しの後も残ります。履歴には写真と窯印見本は含まれません（容量節約のため）。履歴の保存に失敗した場合は、その旨を表示し、成功したようには表示しません。</p>
+<div id="historyList"><p class="small">履歴はまだありません。</p></div>
+<div id="historyStatus"></div>
+<button class="danger" id="btnClearHistory" type="button">査定履歴をすべて消去する</button>
 <h3>バックアップ（ファイル）</h3>
 <p class="hint">閲覧環境によっては端末内保存（localStorage / IndexedDB）が制限され、保存できない場合があります。その場合は、入力内容と見本画像をファイルに書き出しておき、次回そのファイルを読み込むことで復元できます。APIキーはバックアップファイルに含まれません。写真と見本画像が含まれるため、ファイルの取り扱いにはご注意ください。</p>
 <button class="sub" id="btnExport" type="button">バックアップを書き出す（ファイルに保存）</button>
@@ -239,7 +244,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 
 </main>
 
-<footer>試作 v2.3.13 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
+<footer>試作 v2.3.15 — 相場は自動取得していません。価格帯は、あなたが確認した成約価格か、AIの参考推定（その旨を明示）のどちらかに基づきます。</footer>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -285,6 +290,13 @@ const out = cv.toDataURL('image/jpeg', 0.8);
 return (out && out.startsWith('data:image/jpeg')) ? out : null;
 }catch(e){ return null; }
 }
+// v2.3.14: 写真の初期化を共通化。内部データ・プレビューのsrc・ファイル入力・注記をすべて消す（APIキー・履歴・見本には触れない）
+function clearPhotos(){
+images.surface = null; images.back = null;
+['imgSurface', 'imgBack'].forEach(id => { const im = $(id); im.removeAttribute('src'); im.style.display = 'none'; });
+$('fileSurface').value = ''; $('fileBack').value = '';
+photoNote('surface', '表面: まだ登録されていません'); photoNote('back', '裏面: まだ登録されていません');
+}
 function clearItemResults(){
 $('factSurface').value = ''; $('factBackstamp').value = ''; $('factLogo').value = '';
 $('candidates').innerHTML = ''; $('candidates').appendChild(candidateEl());
@@ -313,6 +325,7 @@ function bindPhoto(inputId, imgId, key){
 const label = key === 'surface' ? '表面' : '裏面';
 let lastSig = '', lastAt = 0;
 const handler = e => {
+userInteracted = true;
 const f = e.target.files && e.target.files[0];
 if(!f){ photoNote(key, label + ': 写真が選ばれませんでした。もう一度選んでください。', true); return; }
 const sig = (f.name || '') + '|' + f.size + '|' + (f.lastModified || 0);
@@ -904,16 +917,14 @@ $('btnGemini').addEventListener('click', runGemini);
 $('btnReset').addEventListener('click', () => {
 const ok = (typeof window.confirm === 'function') ? window.confirm('写真・検索結果・候補を初期化して、新しい商品の検索を始めますか？\n（見本ライブラリ・保存データ・バックアップ・APIキーは消えません）') : true;
 if(!ok) return;
-images.surface = null; images.back = null;
-$('imgSurface').style.display = 'none'; $('imgBack').style.display = 'none';
-$('fileSurface').value = ''; $('fileBack').value = '';
-photoNote('surface', '表面: まだ登録されていません'); photoNote('back', '裏面: まだ登録されていません');
+userInteracted = true;
+clearPhotos();
 clearItemResults();
 $('result').innerHTML = ''; lastSummary = ''; $('btnCopy').disabled = true;
 $('condition').value = '1.0'; document.querySelectorAll('.dmg').forEach(x => x.checked = false);
 tempSample = null; $('samplePreview').style.display = 'none'; $('sampleNote').textContent = '見本: まだ選ばれていません';
 $('status').textContent = '初期化しました。新しい商品の写真を追加してください。';
-scheduleSave();
+saveNow(false); scheduleSave();
 });
 $('btnRetry').addEventListener('click', runGemini);
 $('btnSwitchRetry').addEventListener('click', () => {
@@ -1310,6 +1321,7 @@ resultHtml: $('result').innerHTML, lastSummary
 let saveTimer = null;
 // ---- 保存まわり: 環境チェック（localStorage / IndexedDB） ----
 let storageMode = 'none'; // 'local' | 'indexeddb' | 'none'
+let userInteracted = false; // v2.3.14: 起動時の非同期復元（IndexedDB）が、利用者の操作後の状態を上書きしないための印
 let storageErrorName = '';
 function probeLocalStorage(){
 try{ const k = '__shokki_probe__'; localStorage.setItem(k, '1'); localStorage.removeItem(k); return true; }
@@ -1317,6 +1329,9 @@ catch(e){ storageErrorName = (e && e.name) ? e.name : 'Error'; return false; }
 }
 const IDB_NAME = 'shokki-brand-search';
 const IDB_KEY = 'state-v1';
+// v2.3.15: 保存済み査定履歴は作業中データとは別の保存場所に分ける（リセット・自動保存では触れない）
+const HISTORY_STORE_KEY = 'brand-search-history-v1';
+const IDB_HISTORY_KEY = 'history-v1';
 function idbOpen(){
 return new Promise((resolve, reject) => {
 try{
@@ -1345,9 +1360,15 @@ return idbTx('readwrite', st => st.put('1', '__shokki_probe__'))
 .then(v => { idbTx('readwrite', st => st.delete('__shokki_probe__')).catch(() => {}); return v === '1'; })
 .catch(() => false);
 }
-function idbSaveState(state){ return idbTx('readwrite', st => st.put(state, IDB_KEY)).then(() => true); }
-function idbLoadState(){ return idbTx('readonly', st => st.get(IDB_KEY)).then(v => v || null); }
-function idbClearState(){ return idbTx('readwrite', st => st.delete(IDB_KEY)).then(() => true).catch(() => false); }
+// v2.3.15: IndexedDBの読み書きを直列化し、保存の実行順序が逆転しないようにする
+let idbQueue = Promise.resolve();
+function idbEnqueue(fn){ const p = idbQueue.then(fn, fn); idbQueue = p.then(() => {}, () => {}); return p; }
+function idbSaveState(state){ return idbEnqueue(() => idbTx('readwrite', st => st.put(state, IDB_KEY))).then(() => true); }
+function idbLoadState(){ return idbEnqueue(() => idbTx('readonly', st => st.get(IDB_KEY))).then(v => v || null); }
+function idbClearState(){ return idbEnqueue(() => idbTx('readwrite', st => st.delete(IDB_KEY))).then(() => true).catch(() => false); }
+function idbSaveHistory(list){ return idbEnqueue(() => idbTx('readwrite', st => st.put(list, IDB_HISTORY_KEY))).then(() => true); }
+function idbLoadHistory(){ return idbEnqueue(() => idbTx('readonly', st => st.get(IDB_HISTORY_KEY))).then(v => Array.isArray(v) ? v : []); }
+function idbClearHistory(){ return idbEnqueue(() => idbTx('readwrite', st => st.delete(IDB_HISTORY_KEY))).then(() => true).catch(() => false); }
 function storageUnavailableHtml(){
 return '<span class="warn">この環境では端末内保存が使えません（' + (storageErrorName || 'SecurityError') + '）。入力は画面を閉じると消えます。下の「バックアップを書き出す」でファイルに保存し、次回「バックアップを読み込む」で復元できます。</span>';
 }
@@ -1359,7 +1380,7 @@ if(probeLocalStorage()) storageMode = 'local';
 else {
 updateStorageNotice();
 probeIndexedDB().then(ok => {
-if(ok){ storageMode = 'indexeddb'; updateStorageNotice(); idbLoadState().then(s => { if(s) applyRestore(s); }).catch(() => {}); }
+if(ok){ storageMode = 'indexeddb'; updateStorageNotice(); idbLoadState().then(s => { if(s && !userInteracted) applyRestore(s); }).catch(() => {}); idbLoadHistory().then(list => { appraisalHistory = list; renderHistoryList(); }).catch(() => {}); }
 });
 }
 function saveNow(showMsg){
@@ -1415,7 +1436,86 @@ document.addEventListener('change', e => {
 if(e.target.closest && (e.target.closest('.candidate') || e.target.closest('.price-row'))) scheduleSave();
 if(e.target.id === 'condition' || (e.target.classList && e.target.classList.contains('dmg'))) scheduleSave();
 });
-$('btnSave').addEventListener('click', () => saveNow(true));
+/* ---------- v2.3.15: 保存済み査定履歴（作業中データとは別保存。リセット・自動保存では触れない） ---------- */
+let appraisalHistory = [];
+function historyFingerprint(data){
+return JSON.stringify([data.facts || {}, data.candidates || [], data.priceRows || [], data.priceEstimate || null, data.lastSummary || '']);
+}
+function buildHistoryEntry(){
+const full = collectState();
+const data = { facts: full.facts, candidates: full.candidates, priceRows: full.priceRows, priceEstimate: full.priceEstimate,
+material: full.material, valueAlert: full.valueAlert, category: full.category, itemType: full.itemType, risk: full.risk,
+kilnGuard: full.kilnGuard, kilnCaution: full.kilnCaution, kilnCheck: full.kilnCheck, priceStatus: full.priceStatus, candExtras: full.candExtras,
+keywords: full.keywords, resultHtml: full.resultHtml, lastSummary: full.lastSummary, condition: full.condition, dmg: full.dmg };
+const hasContent = (data.candidates || []).some(c => (c.maker || '').trim()) || (data.facts && (data.facts.surface || data.facts.back || data.facts.logo)) || !!data.lastSummary || !!data.priceEstimate;
+if(!hasContent) return null;
+return { id: 'h' + Date.now().toString(36) + Math.floor(Math.random() * 100000).toString(36), savedAt: new Date().toISOString(), fingerprint: historyFingerprint(data), data };
+}
+function persistHistory(){
+if(storageMode === 'indexeddb') return idbSaveHistory(appraisalHistory).then(() => true).catch(() => false);
+if(storageMode !== 'local') return Promise.resolve(false);
+try{ localStorage.setItem(HISTORY_STORE_KEY, JSON.stringify(appraisalHistory)); return Promise.resolve(true); }
+catch(e){ return Promise.resolve(false); }
+}
+function loadLocalHistory(){
+try{ const raw = localStorage.getItem(HISTORY_STORE_KEY); const list = raw ? JSON.parse(raw) : []; appraisalHistory = Array.isArray(list) ? list : []; }
+catch(e){ appraisalHistory = []; }
+renderHistoryList();
+}
+function historyTitle(e){
+const c = (e.data && Array.isArray(e.data.candidates) && e.data.candidates[0]) || {};
+const maker = (c.maker || '').trim() || 'ブランド未特定';
+const series = (c.series || '').trim();
+return maker + (series ? '／' + series : '');
+}
+function renderHistoryList(){
+const el = $('historyList'); if(!el) return;
+if(!appraisalHistory.length){ el.innerHTML = '<p class="small">履歴はまだありません。</p>'; return; }
+el.innerHTML = appraisalHistory.slice().reverse().map(e => {
+const d = e.data || {}; const pe = d.priceEstimate;
+const price = pe ? '<br>AI参考価格: ' + Number(pe.low).toLocaleString() + '〜' + Number(pe.high).toLocaleString() + '円（' + esc(pe.unit || '単位不明') + '）' : '';
+const when = e.savedAt ? new Date(e.savedAt).toLocaleString('ja-JP') : '';
+return '<div class="history-item" data-hid="' + esc(e.id) + '" style="border:1px solid #ddd;border-radius:8px;padding:8px;margin:6px 0">'
++ '<p style="margin:0"><strong>' + esc(historyTitle(e)) + '</strong><br><span class="small">' + esc(when) + price + '</span></p>'
++ '<button class="sub btnHistoryRestore" type="button" data-hid="' + esc(e.id) + '">この結果を画面に戻す</button> '
++ '<button class="danger btnHistoryDelete" type="button" data-hid="' + esc(e.id) + '">この履歴を削除</button></div>';
+}).join('');
+el.querySelectorAll('.btnHistoryRestore').forEach(b => b.addEventListener('click', () => restoreHistoryEntry(b.getAttribute('data-hid'))));
+el.querySelectorAll('.btnHistoryDelete').forEach(b => b.addEventListener('click', () => deleteHistoryEntry(b.getAttribute('data-hid'))));
+}
+function addCurrentToHistory(){
+const st = $('historyStatus');
+if(storageMode === 'none'){ st.innerHTML = '<span class="warn">この環境では端末内保存が使えないため、査定履歴は保存できません（画面を閉じると消えます）。</span>'; return; }
+const entry = buildHistoryEntry();
+if(!entry){ st.innerHTML = '<span class="warn">履歴に追加できる査定結果がありませんでした（作業中のデータの保存のみ行いました）。</span>'; return; }
+if(appraisalHistory.some(e => e.fingerprint === entry.fingerprint)){ st.innerHTML = '<span class="ok">同じ査定結果は既に履歴に保存されています（重複を防ぐため、追加しませんでした）。履歴は' + appraisalHistory.length + '件です。</span>'; renderHistoryList(); return; }
+appraisalHistory.push(entry);
+persistHistory().then(ok => {
+if(ok){ st.innerHTML = '<span class="ok">査定履歴に追加しました（履歴は' + appraisalHistory.length + '件です）。リセットしても履歴は消えません。</span>'; }
+else { appraisalHistory = appraisalHistory.filter(e => e.id !== entry.id); st.innerHTML = '<span class="warn">査定履歴を保存できませんでした。容量不足などの可能性があります（履歴には追加されていません）。</span>'; }
+renderHistoryList();
+});
+}
+function restoreHistoryEntry(id){
+const e = appraisalHistory.find(x => x.id === id); if(!e) return;
+userInteracted = true;
+clearPhotos();
+$('priceRows').innerHTML = '';
+$('result').innerHTML = '';
+applyRestore(JSON.parse(JSON.stringify(e.data)));
+$('status').textContent = '保存済み査定履歴から結果を画面に戻しました（写真は履歴に含まれないため、表示されません）。';
+saveNow(false); scheduleSave();
+}
+function deleteHistoryEntry(id){
+const before = appraisalHistory;
+appraisalHistory = appraisalHistory.filter(x => x.id !== id);
+persistHistory().then(ok => {
+if(!ok){ appraisalHistory = before; $('historyStatus').innerHTML = '<span class="warn">履歴を削除できませんでした（保存に失敗しました）。</span>'; }
+else $('historyStatus').innerHTML = '<span class="ok">履歴を1件削除しました（履歴は' + appraisalHistory.length + '件です）。</span>';
+renderHistoryList();
+});
+}
+$('btnSave').addEventListener('click', () => { saveNow(true); addCurrentToHistory(); });
 $('btnClearSave').addEventListener('click', () => {
 try{ localStorage.removeItem(STORE_KEY); }catch(e){}
 if(storageMode === 'indexeddb') idbClearState();
@@ -1424,19 +1524,30 @@ $('candidates').innerHTML = ''; $('candidates').appendChild(candidateEl());
 $('priceRows').innerHTML = '';
 priceEstimate = null; renderPriceEst();
 currentKeywords = []; $('searchLinks').innerHTML = '';
-images.surface = null; images.back = null;
-$('imgSurface').style.display = 'none'; $('imgBack').style.display = 'none';
-photoNote('surface', '表面: まだ登録されていません'); photoNote('back', '裏面: まだ登録されていません');
+userInteracted = true;
+clearPhotos();
 $('result').innerHTML = ''; lastSummary = ''; $('btnCopy').disabled = true;
 stampSamples = []; stampComparison = null; lastStampInfo = { used: false, count: 0, brands: [] }; renderSampleList();
 $('condition').value = '1.0'; document.querySelectorAll('.dmg').forEach(x => x.checked = false); $('photoGuide').style.display = 'none';
 renderBand();
-$('saveStatus').innerHTML = '<span class="ok">保存した内容を消去しました。</span>';
+$('saveStatus').innerHTML = '<span class="ok">保存した内容を消去しました。</span><br><span class="small">保存済み査定履歴は消去されていません（履歴の消去は「査定履歴をすべて消去する」から行ってください）。</span>';
 });
 
+$('btnClearHistory').addEventListener('click', () => {
+if(storageMode === 'none'){ appraisalHistory = []; renderHistoryList(); $('historyStatus').innerHTML = '<span class="ok">査定履歴をすべて消去しました。</span>'; return; }
+const ok = (typeof window.confirm === 'function') ? window.confirm('保存済み査定履歴をすべて消去しますか？（作業中のデータ・見本・APIキーには影響しません）') : true;
+if(!ok) return;
+const before = appraisalHistory;
+appraisalHistory = [];
+persistHistory().then(done => {
+if(!done){ appraisalHistory = before; $('historyStatus').innerHTML = '<span class="warn">査定履歴を消去できませんでした（保存に失敗しました）。</span>'; }
+else $('historyStatus').innerHTML = '<span class="ok">査定履歴をすべて消去しました。</span>';
+renderHistoryList();
+});
+});
 $('btnExport').addEventListener('click', () => {
 try{
-const payload = { ...collectState(), backupVersion: 1, exportedAt: new Date().toISOString() };
+const payload = { ...collectState(), history: appraisalHistory, backupVersion: 1, exportedAt: new Date().toISOString() };
 const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
 const url = URL.createObjectURL(blob);
 const a = document.createElement('a');
@@ -1469,6 +1580,7 @@ $('backupStatus').textContent = '読み込み失敗: このファイルは、こ
 const ok = (typeof window.confirm === 'function') ? window.confirm('現在の入力内容と見本は、バックアップの内容で置き換わります。読み込んでよろしいですか？') : true;
 if(!ok){ $('backupStatus').textContent = '読み込みを中止しました（現在のデータはそのままです）。'; done(); return; }
 applyRestore(s);
+if(Array.isArray(s.history)){ appraisalHistory = s.history; persistHistory(); renderHistoryList(); }
 saveNow(false);
 $('backupStatus').textContent = 'バックアップを読み込みました。' + (storageMode === 'none' ? 'この環境では端末内に保存できないため、画面を閉じると消えます。' : '');
 }catch(err){ $('backupStatus').textContent = '読み込み失敗: ' + (err && err.message ? err.message : '不明なエラー') + '。ファイルが壊れている可能性があります。'; }
@@ -1524,7 +1636,8 @@ applyRestore(JSON.parse(raw));
 }catch(e){ if(!$('candidates').children.length) $('candidates').appendChild(candidateEl()); }
 })();
 
-$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.13';
+if(storageMode === 'local') loadLocalHistory();
+$('bootCheck').textContent = '動作チェック: OK（ボタンは有効です）v2.3.15';
 $('bootCheck').style.background = '#e9f9ee';
 $('bootCheck').style.borderColor = '#7bc47f';
 </script>
