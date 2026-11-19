@@ -124,6 +124,7 @@ footer{ text-align:center; font-size:12px; color:var(--muted); padding:0 16px 30
 <label>参考中古価格帯（1点あたり）と3,000円判定</label>
 <div id="bandBox" class="box">価格不明（確認した成約価格もAI参考推定もありません）</div>
 <button id="btnShowResult" type="button">結果をまとめて表示する</button>
+<p class="small" id="showResultNote" style="margin:4px 0;"></p>
 <div class="result" id="result"></div>
 <button class="sub" id="btnCopy" type="button" disabled>結果をテキストでコピー</button>
 </section>
@@ -1403,7 +1404,14 @@ if(band && cands[0] && cands[0].pattern) lines.push(`価格推定の参考: 柄�
 $('btnCopy').disabled = false;
 lastSummary = lines.join('\n');
 }
-$('btnShowResult').addEventListener('click', () => { renderResult(); saveNow();});
+$('btnShowResult').addEventListener('click', () => {
+// v2.3.16ボタン改善: 更新できたかどうかをボタンの下に表示する（成功は、表示の生成が完了した場合だけ）
+const note = $('showResultNote');
+const showNote = (msg, warn) => { if(!note) return; note.textContent = msg; note.style.color = warn ? '#b3261e' : ''; clearTimeout(note._t); note._t = setTimeout(() => { note.textContent = ''; }, 4000); };
+try{ renderResult(); }catch(e){ showNote('まとめ表示を更新できませんでした', true); return; }
+try{ saveNow(); }catch(e){}
+showNote('まとめ表示を更新しました', false);
+});
 $('btnCopy').addEventListener('click', async () => {
 try{ await navigator.clipboard.writeText(lastSummary); $('btnCopy').textContent = 'コピーしました';}
 catch(e){ prompt('コピーできない場合はこちらを長押しでコピーしてください', lastSummary);}
