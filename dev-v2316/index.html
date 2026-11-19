@@ -258,6 +258,64 @@ const img = $(imgId);
 img.src = dataUrl; img.style.display = 'block';
 images[key] = { mime: mime || 'image/jpeg', base64: String(dataUrl).split(',')[1] || '', dataUrl};
 }
+// v2.3.16写真修正: 縮小結果の妥当性チェック。
+// ・寸法が極端に小さい（1×1等）ものはキャプチャ失敗として不合格にする
+// ・真っ黒判定は補助条件: サンプルした全画素が「完全に同一の真っ黒」で変化が一切ない場合だけ不合格。
+//   黒い背景・黒い食器の写真は陰影や反射で画素にばらつきがあるため、通常は不合格にならない
+const MIN_IMAGE_SIDE = 32;
+function canvasIsUniformBlack(cv){
+const ctx = cv.getContext('2d');
+if(!ctx) throw new Error('canvas unavailable');
+const w = cv.width, h = cv.height;
+const data = ctx.getImageData(0, 0, w, h).data;
+const sx = Math.max(1, Math.floor(w / 24)), sy = Math.max(1, Math.floor(h / 24));
+for(let y = 0; y < h; y += sy){
+for(let x = 0; x < w; x += sx){
+const i = (y * w + x) * 4;
+if(data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0) return false;
+}
+}
+return true;
+}
+function canvasImageValid(cv, checkSize){
+try{
+if(!cv) return false;
+if(checkSize !== false && (cv.width < MIN_IMAGE_SIDE || cv.height < MIN_IMAGE_SIDE)) return false;
+return !canvasIsUniformBlack(cv);
+}catch(e){ return false; } // v2.3.16安全補強: 正常性を確認できない場合は安全側に倒す
+}
+// dataURLの画像としての妥当性（寸法と真っ黒チェック）を非同期で確認する。判定できない場合は通す
+function checkImageData(dataUrl){
+return new Promise(res => {
+// v2.3.16安全補強: canvas取得失敗・処理例外・読み込み停滞などで正常性を確認できない場合は、送信可能な側に倒さず不合格にする
+let settled = false;
+const timer = setTimeout(() => { if(!settled){ settled = true; res(false); } }, 10000);
+const done = v => { if(settled) return; settled = true; clearTimeout(timer); res(v); };
+try{
+const im = new Image();
+im.onload = () => {
+try{
+if(im.width < MIN_IMAGE_SIDE || im.height < MIN_IMAGE_SIDE){ done(false); return; }
+const scale = Math.min(1, 256 / Math.max(im.width, im.height));
+const cv = document.createElement('canvas');
+cv.width = Math.max(1, Math.round(im.width * scale)); cv.height = Math.max(1, Math.round(im.height * scale));
+const ctx = cv.getContext('2d');
+if(!ctx){ done(false); return; }
+ctx.drawImage(im, 0, 0, cv.width, cv.height);
+done(canvasImageValid(cv, false));
+}catch(e){ done(false); }
+};
+im.onerror = () => done(false);
+im.src = dataUrl;
+}catch(e){ done(false); }
+});
+}
+// 送信前チェック: 異常な画像があれば、その写真の表示名を返す（正常なら null）
+async function validateSendImages(){
+if(images.surface && !(await checkImageData(images.surface.dataUrl))) return '表面写真';
+if(images.back && !(await checkImageData(images.back.dataUrl))) return '裏面写真';
+return null;
+}
 function downscale(dataUrl, done){
 try{
 const im = new Image();
@@ -265,11 +323,13 @@ im.onload = () => {
 try{
 const max = 1024, scale = Math.min(1, max / Math.max(im.width, im.height));
 if(scale >= 1){ done(null); return;}
+if(im.width < MIN_IMAGE_SIDE || im.height < MIN_IMAGE_SIDE){ done(null); return;}
 const cv = document.createElement('canvas');
 cv.width = Math.round(im.width * scale); cv.height = Math.round(im.height * scale);
 const ctx = cv.getContext('2d');
 if(!ctx){ done(null); return;}
 ctx.drawImage(im, 0, 0, cv.width, cv.height);
+if(!canvasImageValid(cv)){ done(null); return;} // 1×1・真っ黒なキャプチャ失敗は採用しない
 done(cv.toDataURL('image/jpeg', 0.82));
 }catch(e){ done(null);}
 };
@@ -287,6 +347,7 @@ cv.width = Math.round(w * scale); cv.height = Math.round(h * scale);
 const ctx = cv.getContext('2d');
 if(!ctx) return null;
 ctx.drawImage(img, 0, 0, cv.width, cv.height);
+if(!canvasImageValid(cv)) return null; // 異常な縮小結果は返さない
 const out = cv.toDataURL('image/jpeg', 0.8);
 return (out && out.startsWith('data:image/jpeg')) ? out : null;
 }catch(e){ return null; }
@@ -325,6 +386,7 @@ el.style.fontWeight = isWarn ? '700' : '';
 function bindPhoto(inputId, imgId, key){
 const label = key === 'surface' ? '表面' : '裏面';
 let lastSig = '', lastAt = 0;
+let regSeq = 0; // v2.3.16写真修正: 登録の世代。新しい登録のたびに増やし、古い非同期処理の結果を捨てる
 const handler = e => {
 userInteracted = true;
 const f = e.target.files && e.target.files[0];
@@ -333,41 +395,54 @@ const sig = (f.name || '') + '|' + f.size + '|' + (f.lastModified || 0);
 const now = Date.now();
 if(sig === lastSig && now - lastAt < 2000) return; // inputとchangeの二重発火を間引く
 lastSig = sig; lastAt = now;
+const mySeq = ++regSeq;
+const alive = () => mySeq === regSeq;
+let adopted = 'none'; // 'none' | 'shrunk'（正常な縮小を採用済み） | 'original'（元データを保持中）
 invalidateForNewPhotos();
 const fname = f.name || '写真';
 photoNote(key, label + ': 読み込み中…（' + fname + '）');
+const failRegister = () => {
+if(!alive() || adopted !== 'none') return;
+images[key] = null;
+const im = $(imgId); im.removeAttribute('src'); im.style.display = 'none';
+photoNote(key, label + ': 登録に失敗しました。写真を読み直すか、別の写真で試してください。', true);
+scheduleSave();
+};
 // まずブラウザ内の一時URLで即座にプレビューする（大きな写真でも表示されやすい）
 let objUrl = null;
-let previewShrunk = null;
 try{ if(window.URL && typeof URL.createObjectURL === 'function') objUrl = URL.createObjectURL(f); }catch(err){ objUrl = null; }
 if(objUrl){
 const img = $(imgId);
 img.onerror = () => { /* 読み込み結果の表示に任せる */ };
 img.onload = () => {
+if(!alive() || adopted === 'shrunk') return; // 採用済みの縮小を、後からの処理で上書きしない
 // 表示できた画像要素から直接JPEG化する（HEIC等でdataURL経由の縮小が効かない場合の保険）
 const small = shrinkImageEl(img);
-if(small){ previewShrunk = small; setImage(key, imgId, small, 'image/jpeg'); photoNote(key, label + ': 登録しました（' + fname + '）'); scheduleSave(); }
+if(small){ adopted = 'shrunk'; setImage(key, imgId, small, 'image/jpeg'); photoNote(key, label + ': 登録しました（' + fname + '）'); scheduleSave(); }
 };
 img.src = objUrl; img.style.display = 'block';
 }
 const r = new FileReader();
-r.onerror = () => { photoNote(key, label + ': 写真を読み込めませんでした。別の写真で試すか、撮り直してください。', true); };
+r.onerror = () => { failRegister(); };
 r.onload = () => {
+if(!alive()) return;
 const dataUrl = String(r.result || '');
-if(!dataUrl.startsWith('data:')){ photoNote(key, label + ': 写真を読み込めませんでした。別の写真で試してください。', true); return; }
-if(previewShrunk){
-images[key] = { mime: 'image/jpeg', base64: previewShrunk.split(',')[1] || '', dataUrl: previewShrunk };
-} else if(objUrl){
-// プレビューは一時URLのままにし、送信用データだけ差し替える（縮小できたらsetImageで置き換わる）
-images[key] = { mime: f.type || 'image/jpeg', base64: dataUrl.split(',')[1] || '', dataUrl };
-} else {
-setImage(key, imgId, dataUrl, f.type || 'image/jpeg');
+if(!dataUrl.startsWith('data:image')){ failRegister(); return; }
+if(adopted !== 'shrunk'){
+// 正常な縮小がまだ無い場合は、安全な元データを保持する（異常な縮小で上書きされないための受け皿）
+adopted = 'original';
+if(objUrl){ images[key] = { mime: f.type || 'image/jpeg', base64: dataUrl.split(',')[1] || '', dataUrl }; }
+else setImage(key, imgId, dataUrl, f.type || 'image/jpeg');
 }
 photoNote(key, label + ': 登録しました（' + fname + '）');
-downscale(dataUrl, small => { if(small && !previewShrunk) setImage(key, imgId, small, 'image/jpeg'); scheduleSave(); });
+downscale(dataUrl, small => {
+if(!alive()) return;
+if(small && adopted !== 'shrunk'){ adopted = 'shrunk'; setImage(key, imgId, small, 'image/jpeg'); }
+scheduleSave();
+});
 scheduleSave();
 };
-try{ r.readAsDataURL(f); }catch(err){ photoNote(key, label + ': 写真を読み込めませんでした。別の写真で試してください。', true); }
+try{ r.readAsDataURL(f); }catch(err){ failRegister(); }
 };
 $(inputId).addEventListener('change', handler);
 $(inputId).addEventListener('input', handler);
@@ -837,8 +912,18 @@ const key = $('apiKey').value.trim(), model = effectiveModel();
 if(!key){ st.textContent = 'APIキーを入力してください。'; return;}
 if(!model){ st.textContent = 'モデルを選ぶか、モデルIDを入力してください。'; return;}
 if(!images.surface &&!images.back){ st.textContent = '先に写真を追加してください。'; return;}
-
+// v2.3.16安全補強: 検証が終わる前から送信中として扱い、検証中の連続操作でも二重送信が始まらないようにする
 geminiState.busy = true; geminiState.busySince = Date.now(); refreshGeminiUi();
+st.textContent = '送信前に画像を確認しています…';
+let badImage = null, verifyFailed = false;
+try{ badImage = await validateSendImages(); }catch(e){ verifyFailed = true; }
+if(badImage || verifyFailed){
+geminiState.busy = false; refreshGeminiUi(); // 検証で止めた場合も、再操作できる状態へ戻す
+st.textContent = verifyFailed
+? '画像データを確認できなかったため、安全のため送信しませんでした。写真を登録し直してから検索してください。'
+: badImage + 'の画像データが異常なため、送信しませんでした（小さすぎる、または真っ黒に潰れています）。写真を登録し直してから検索してください。';
+return;
+}
 const useSamples = stampSamples.length > 0;
 lastStampInfo = { used: useSamples, count: stampSamples.length, brands: [...new Set(stampSamples.map(s => s.brand))] };
 stampComparison = null;
