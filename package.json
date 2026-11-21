@@ -1,0 +1,1 @@
+{"description":"食器AIブランドサーチ v2.3.16 自動回帰テスト（API通信なし・実データ不使用）","devDependencies":{"jsdom":"^25.0.1"},"name":"shokki-brand-search-tests","private":true,"scripts":{"test:brand":"node tests/run-brand-tests.mjs"},"version":"1.0.0"}
