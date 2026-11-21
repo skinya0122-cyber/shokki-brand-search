@@ -713,7 +713,7 @@ $('btnAddPrice').addEventListener('click', () => { $('priceRows').appendChild(pr
 let priceEstimate = null;
 function renderPriceEst(){
 const box = $('priceEstBox');
-if(!priceEstimate){ box.textContent = antiquePossible() ? '古陶磁器の可能性があるため、AI参考価格は表示していません（価格不明・要確認）。専門家による確認を推奨します。' : ((lastPriceStatus && lastPriceStatus.code !== 'shown') ? '価格不明・要確認: ' + lastPriceStatus.text : 'まだありません。写真をGeminiで読み取ると、根拠がある場合のみ参考推定が表示されます。'); return;}
+if(!priceEstimate || aiPriceHeldForKiln()){ box.textContent = antiquePossible() ? '古陶磁器の可能性があるため、AI参考価格は表示していません（価格不明・要確認）。専門家による確認を推奨します。' : (aiPriceHeldForKiln() ? '価格不明・要確認: 窯元の確認が取れていないため、保存されていたAI参考価格を表示していません（' + (kilnCheck ? kilnCheck.stampLabel : '窯元未確認') + '）' : ((lastPriceStatus && lastPriceStatus.code !== 'shown') ? '価格不明・要確認: ' + lastPriceStatus.text : 'まだありません。写真をGeminiで読み取ると、根拠がある場合のみ参考推定が表示されます。')); return;}
 const uKind = priceUnitKind(priceEstimate);
 box.innerHTML = `<b>${priceEstimate.low.toLocaleString()} 〜 ${priceEstimate.high.toLocaleString()} 円</b>（AI参考推定（未検証）／中古販売価格）／対象単位: ${esc(priceEstimate.unit || '単位不明')}${uKind !== 'per_item' ? '<br><b>' + esc(unitCautionText(uKind)) + '</b>' : ''}${priceEstimate.count? '／数量: ' + priceEstimate.count + '点': ''}${priceEstimate.countNote? '（数量メモ: ' + esc(priceEstimate.countNote) + '）': ''}${priceEstimate.note? '<br>根拠メモ: ' + esc(priceEstimate.note): ''}${(kilnCheck && kilnCheck.caution && !kilnCheck.priceBlock) ? '<br><b>窯元要確認</b>（窯元の確認が取れていない候補の価格です）' : ''}<br>※ 確認済み成約価格ではありません。${priceWeaknesses().length ? '<br>価格の弱点: ' + priceWeaknesses().join('・') + 'のため、この価格は幅のある目安です。' : ''}`;
 }
@@ -733,7 +733,7 @@ if(prices.length >= 1){
 const med = Math.floor(median(prices));
 return { low: floor100(med * 0.8), high: ceil100(med * 1.2), basis: `実績ベース（確認済み成約${prices.length}件・件数が少ない）`, weak: true, unit: '1点あたり', unitKind: 'per_item'};
 }
-if(priceEstimate && priceEstimate.low > 0 && priceEstimate.high >= priceEstimate.low){
+if(priceEstimate && !aiPriceHeldForKiln() && priceEstimate.low > 0 && priceEstimate.high >= priceEstimate.low){
 return { low: priceEstimate.low, high: priceEstimate.high, basis: 'AI参考推定（未検証）', weak: true, unit: priceEstimate.unit || '単位不明', unitKind: priceUnitKind(priceEstimate), count: priceEstimate.count || null, countNote: priceEstimate.countNote || ''};
 }
 return null;
@@ -806,7 +806,8 @@ if(!band){ box.className = 'box box-warn'; box.innerHTML = '<div class="band-pri
 box.className = tier.name === '高額候補'? 'box box-warn': 'box';
 const aiNote = band.basis.startsWith('AI参考推定')? '<div class="small">※ この価格帯は中古販売価格のAI推定であり、確認済み成約価格ではありません。</div>': '';
 const unitNote = (band.unitKind && band.unitKind !== 'per_item') ? `<div class="small"><b>${esc(unitCautionText(band.unitKind))}</b></div>` : '';
-box.innerHTML = `<div class="band-price">${band.low.toLocaleString()} 〜 ${band.high.toLocaleString()} 円</div><div><span class="tag ${tier.cls}">${tier.name}</span></div><div class="small">根拠: ${esc(band.basis)}／対象単位: ${esc(band.unit || '単位不明')}${band.count? '／数量: ' + band.count + '点': ''}${band.countNote? '（' + esc(band.countNote) + '）': ''}</div>${unitNote}${aiNote}`;
+const kilnNote = manualBandKilnNote(band) ? '<div class="small"><b>' + esc(manualBandKilnNote(band)) + '</b></div>' : '';
+box.innerHTML = `<div class="band-price">${band.low.toLocaleString()} 〜 ${band.high.toLocaleString()} 円</div><div><span class="tag ${tier.cls}">${tier.name}</span></div><div class="small">根拠: ${esc(band.basis)}／対象単位: ${esc(band.unit || '単位不明')}${band.count? '／数量: ' + band.count + '点': ''}${band.countNote? '（' + esc(band.countNote) + '）': ''}</div>${unitNote}${aiNote}${kilnNote}`;
 return band;
 }
 
@@ -996,7 +997,7 @@ else { pg.style.display = 'none'; pg.innerHTML = '';}
 
 geminiState.failStreak = 0;
 geminiState.busy = false;
-const kilnBlock = !!(kilnCheck && kilnCheck.priceBlock);
+const kilnBlock = aiPriceKilnBlocked(kilnCheck); // C004: mismatchを含む未確認全般でAI参考価格を抑止（従来はpriceBlockのみ）
 const pe = data.price_band_estimate;
 const peValid = !!(pe && Number(pe.low) > 0 && Number(pe.high) >= Number(pe.low));
 if(antiquePossible()) lastPriceStatus = { code: 'suppressed', text: antiqueRisk ? 'アプリ側の安全チェックにより、価格を表示していません' : 'AIの分類が「古陶磁器・骨董品の可能性」のため、価格を表示していません' };
@@ -1055,7 +1056,7 @@ $('modelId').value = GEMINI_ALT_MODEL;
 scheduleSave();
 runGemini();
 });
-window.__gemini = { classifyGeminiError, sanitizeText, state: geminiState, runGemini, refreshGeminiUi, GEN_CONFIG, priceUnitKind, computeKilnCaution, computeKilnGuard, assessKilnVerification, kilnKeyOf, kilnNameConfirmed, highValueEvidence, bandTier };
+window.__gemini = { classifyGeminiError, sanitizeText, state: geminiState, runGemini, refreshGeminiUi, GEN_CONFIG, priceUnitKind, computeKilnCaution, computeKilnGuard, assessKilnVerification, kilnKeyOf, kilnNameConfirmed, highValueEvidence, bandTier, aiPriceKilnBlocked, manualBandKilnNote, computeBand, aiPriceHeldForKiln };
 
 
 /* ---------- 接続診断 ---------- */
@@ -1280,7 +1281,9 @@ const key = kilnKeyOf(top.maker);
 if(!key) return null;
 const f = (data && data.observed_facts) || {};
 const rawText = (f.backstamp_text || '');
-const stampText = rawText + ' ' + (f.backstamp_logo || '');
+// v2.3.16 C004補修: 窯元名の文字確認は backstamp_text（実際に読めた文字の転記）だけを基準にする。
+// backstamp_logo は形状の説明文で、AIが推測した窯元名が混ざりうるため、窯元名の照合には使わない（kilnNameConfirmed と基準を統一）
+const stampText = rawText;
 const upper = stampText.toUpperCase();
 let stampState, stampLabel;
 const otherKilns = JP_KILNS.filter(k => k !== key && stampHasKiln(upper, k));
@@ -1293,6 +1296,13 @@ const competitors = cands.slice(1).filter(c => kilnKeyOf(c.maker)).map(c => c.ma
 const unverified = stampState !== 'read';
 return { maker: top.maker, stampState, stampLabel, stampOtherKilns: otherKilns, competitors, unverified, caution: unverified || competitors.length > 0, priceBlock: stampState === 'unreadable' || stampState === 'empty' || stampState === 'contradiction' };
 }
+// v2.3.16 C004: AI参考価格の窯元抑止は「転記で窯元名が確認できない場合」全般（mismatchを含む）に統一する。確信度の制限（kilnNameConfirmed）と同じ基準。手入力の確認済み成約価格はAI判定に依存しないため対象外
+function aiPriceKilnBlocked(kc){ return !!(kc && kc.unverified); }
+// v2.3.16 C004補修: 保持中のAI参考価格が現在の窯元安全ルールを満たさない場合に、表示だけを保留する判定。
+// 保存データ（priceEstimateの値そのもの）は書き換えず、表示・価格帯の計算でのみ使う
+function aiPriceHeldForKiln(){ return !!(priceEstimate && aiPriceKilnBlocked(kilnCheck)); }
+// v2.3.16 C004: 手入力の実績ベース価格帯を窯元未確認のまま表示するときの注意文（3表示で共用）
+function manualBandKilnNote(band){ return (band && band.basis && band.basis.startsWith('実績ベース') && kilnCheck && kilnCheck.unverified) ? '窯元未確認のため、この成約価格がこの商品のものか、対応を確認してください' : ''; }
 // 判定状態に合った注意文（確信度だけで決めず、候補の競合・銘の完全さ・シリーズの有無も見る）
 function brandNoticeState(cands){
 if(!cands || !cands.length) return 'ブランドは特定できていません。追加撮影や専門家への確認をおすすめします。';
@@ -1310,6 +1320,7 @@ function priceUnknownDetail(){
 let t = '確認した成約価格もAI参考推定もありません';
 if(lastPriceStatus && lastPriceStatus.code === 'ai_no_estimate') t += '（AIが価格推定を返しませんでした）';
 else if(lastPriceStatus && lastPriceStatus.code === 'invalid_values') t += '（AIの価格データが不正だったため不採用にしました）';
+else if(lastPriceStatus && lastPriceStatus.code === 'kiln_unverified') t = '窯元の確認が取れていないため、AI参考価格を表示していません';
 return t;
 }
 // 価格の弱点（シリーズ未確認など。金額は隠さず併記する）
@@ -1369,7 +1380,7 @@ if(lastCategory) h += `<p><b>分類: ${esc(lastCategory.type)}</b>${lastCategory
 if(stampIncomplete()) h += `<p class="small">注意: バックスタンプは完全には読み取れていません。読み取れなかった文字や推測で補った文字は、確定情報ではありません。</p>`;
 if(antiquePossible()) h += `<div class="box box-warn"><b>古陶磁器・高額品の可能性があります。一般的な中古食器と異なる価値が付く場合があるため、専門家による確認を推奨します。</b><br><span class="small">※ これは高額品と断定する表示ではありません。製造年代・窯元・真贋は確定できていません。</span>${(antiqueRisk && antiqueRiskReasons.length) ? '<br><span class="small">アプリ側の安全チェック: ' + esc(antiqueRiskReasons.join('／')) + 'ため、AIの分類・価格より慎重に扱っています。</span>' : ''}</div>`;
 if(kilnGuard) h += `<div class="box box-warn"><b>${kilnGuard.capped <= 40 ? '窯元未確定（取り違えに注意）' : '窯元の取り違えに注意'}</b><br><span class="small">${kilnGuard.capped <= 40 ? 'バックスタンプから窯元名が確認できていないため、この窯元は未確定です。絵柄だけでは個別の窯元を確定しません。' : 'バックスタンプが完全には読み取れていないため、'}第一候補（${esc(kilnGuard.maker)}）の確信度をAIの推定値${kilnGuard.aiConfidence}%から${kilnGuard.capped}%に制限して表示しています。真贋は未確認です。競合する窯元の候補と見比べてください。</span></div>`;
-if(kilnCheck){ const kc = kilnCheck; const stateText = kc.stampState === 'read' ? '転記に第一候補の窯元名が含まれています。ただし、転記と候補が一致しただけでは窯元は確定しません（真贋は未確認です）' : kc.stampState === 'unreadable' ? '銘が完全には読み取れていません（読取不可・推測で補完された部分があります）' : kc.stampState === 'empty' ? 'バックスタンプの転記がありません（読み取り結果なし）' : kc.stampState === 'contradiction' ? '転記には第一候補とは別の窯元名（' + kc.stampOtherKilns.join('、') + '）が含まれており、AIの判定と転記が矛盾しています' : '転記に第一候補の窯元名が含まれていません。窯元は未検証です'; const compLine = kc.competitors.length ? `窯元の確認候補: ${esc(kc.competitors.join('、'))}（AIが候補に挙げた窯元です。各候補の根拠は候補欄で確認してください。どれも確定ではありません）` : 'AIから競合する窯元の候補は示されませんでした。ただし、他の窯元の可能性は否定できません。'; const priceLine = kc.priceBlock ? '価格は、窯元の確認が取れていないため表示していません' : (kc.caution ? '価格は「窯元要確認」の注意つきで表示しています' : '価格への窯元確認による制限はありません（真贋は未確認です）'); h += `<div class="box"><b>${kc.caution ? '⚠ 窯元要確認' : '窯元の確認'}</b><br><span class="small">バックスタンプの確認: ${esc(stateText)}<br>${esc(compLine)}<br>${esc(priceLine)}</span></div>`; }
+if(kilnCheck){ const kc = kilnCheck; const stateText = kc.stampState === 'read' ? '転記に第一候補の窯元名が含まれています。ただし、転記と候補が一致しただけでは窯元は確定しません（真贋は未確認です）' : kc.stampState === 'unreadable' ? '銘が完全には読み取れていません（読取不可・推測で補完された部分があります）' : kc.stampState === 'empty' ? 'バックスタンプの転記がありません（読み取り結果なし）' : kc.stampState === 'contradiction' ? '転記には第一候補とは別の窯元名（' + kc.stampOtherKilns.join('、') + '）が含まれており、AIの判定と転記が矛盾しています' : '転記に第一候補の窯元名が含まれていません。窯元は未検証です'; const compLine = kc.competitors.length ? `窯元の確認候補: ${esc(kc.competitors.join('、'))}（AIが候補に挙げた窯元です。各候補の根拠は候補欄で確認してください。どれも確定ではありません）` : 'AIから競合する窯元の候補は示されませんでした。ただし、他の窯元の可能性は否定できません。'; const priceLine = kc.priceBlock ? '価格は、窯元の確認が取れていないため表示していません' : (kc.unverified ? 'AI参考価格は、窯元の確認が取れていないため表示していません（手入力した確認済み成約価格がある場合は、そちらを表示します）' : (kc.caution ? '価格は「窯元要確認」の注意つきで表示しています' : '価格への窯元確認による制限はありません（真贋は未確認です）')); h += `<div class="box"><b>${kc.caution ? '⚠ 窯元要確認' : '窯元の確認'}</b><br><span class="small">バックスタンプの確認: ${esc(stateText)}<br>${esc(compLine)}<br>${esc(priceLine)}</span></div>`; }
 else if(kilnCaution) h += kilnCaution.competitors.length ? `<div class="box"><b>窯元の確認候補</b><br><span class="small">バックスタンプが完全には読み取れていないため、次の窯元も確認候補です: ${esc(kilnCaution.competitors.join('、'))}。各候補の根拠と見分けポイントは候補欄で確認してください。どれも確定ではありません。</span></div>` : `<div class="box"><b>窯元の確認候補</b><br><span class="small">AIから競合する窯元の候補は示されませんでした。銘が不明瞭なため、他の窯元の可能性は否定できません。銘の接写など追加撮影をおすすめします。</span></div>`;
 if(lastValueAlert && lastValueAlert.possible){ const stateTxt = brandNoticeState(cands); const vad = valueAlertDetails(cands, band); h += `<div class="box box-warn"><b>高額ブランドの可能性・要確認</b><br>${esc(lastValueAlert.reason || '')}<br><span class="small">ブランドの判定根拠: ${esc(vad.basisTxt)}<br>シリーズ: ${esc(vad.seriesTxt)}<br>参考価格: ${esc(vad.priceTxt)}<br>${stateTxt}</span></div>`; }
 if(!cands.length) h += '<p><b>特定できません</b>。根拠のある候補がありません。追加撮影の案内に沿って撮り直すか、詳細設定から候補を手入力してください。</p>';
@@ -1396,7 +1407,7 @@ h += `<p><b>参考見本: ${esc(r.brand) || '―'}</b><br>照合結果: ${esc(r.
 } else if(sresAll.length) h += '<p>見本画像と比較しましたが、素材やブランドが対象と合わない見本のため、照合結果は表示していません（対象外）。</p>';
 else h += '<p>見本画像を送信しましたが、照合結果が返りませんでした（照合は未実施として扱ってください）。</p>';
 h += '<h3>AI参考中古販売価格帯と3,000円判定</h3>';
-if(band) h += `<p><b>${band.low.toLocaleString()} 〜 ${band.high.toLocaleString()} 円</b>（対象単位: ${esc(band.unit || '単位不明')}${band.count? '／数量: ' + band.count + '点': ''}${band.countNote? '（' + esc(band.countNote) + '）': ''}）<br>根拠: ${esc(band.basis)}<br><b>判定: ${tier.name}</b>${(band.unitKind && band.unitKind !== 'per_item') ? '<br><span class="small">' + esc(unitCautionText(band.unitKind)) + '</span>' : ''}${priceWeaknesses().length ? '<br><span class="small">価格の弱点: ' + priceWeaknesses().join('・') + 'のため、この価格は幅のある目安です。</span>' : ''}</p>`;
+if(band) h += `<p><b>${band.low.toLocaleString()} 〜 ${band.high.toLocaleString()} 円</b>（対象単位: ${esc(band.unit || '単位不明')}${band.count? '／数量: ' + band.count + '点': ''}${band.countNote? '（' + esc(band.countNote) + '）': ''}）<br>根拠: ${esc(band.basis)}<br><b>判定: ${tier.name}</b>${(band.unitKind && band.unitKind !== 'per_item') ? '<br><span class="small">' + esc(unitCautionText(band.unitKind)) + '</span>' : ''}${priceWeaknesses().length ? '<br><span class="small">価格の弱点: ' + priceWeaknesses().join('・') + 'のため、この価格は幅のある目安です。</span>' : ''}${manualBandKilnNote(band) ? '<br><span class="small"><b>' + esc(manualBandKilnNote(band)) + '</b></span>' : ''}</p>`;
 else h += '<p><b>判定: ' + tier.name + '</b>（' + (antiquePossible() ? '古陶磁器の可能性があるため、AI参考価格は表示していません' : priceUnknownDetail()) + '）' + ((tier.name.startsWith('高額候補の可能性あり')) ? '<br><span class="small">根拠: ' + esc(ev.reasons.join('／')) + '</span>' : '') + '</p>';
 if(band && cands[0] && cands[0].pattern) h += `<p class="small">柄・商品名の推定（${esc(cands[0].pattern)}）も価格推定の参考に含めています。これはAI参考推定であり、実際の成約相場を検索したものではありません。</p>`;
 $('result').innerHTML = h;
@@ -1416,14 +1427,14 @@ if(antiqueRisk && antiqueRiskReasons.length) lines.push('安全チェック: ' +
 if(stampIncomplete()) lines.push('注意: バックスタンプは完全には読み取れていません（読み取れなかった文字は確定情報ではありません）');
 if(kilnGuard) lines.push((kilnGuard.capped <= 40 ? '窯元未確定（取り違え注意）: バックスタンプから窯元名が確認できていないため、' : '窯元の取り違え注意: バックスタンプが完全には読み取れていないため、') + `第一候補（${kilnGuard.maker}）の確信度をAIの推定値${kilnGuard.aiConfidence}%から${kilnGuard.capped}%に制限して表示しています。真贋は未確認です。`);
 if(kilnCaution) lines.push(kilnCaution.competitors.length ? `窯元の確認候補: ${kilnCaution.competitors.join('、')}（バックスタンプが完全には読み取れていないため。どれも確定ではありません）` : '窯元の確認候補: AIから競合する窯元の候補は示されませんでした（他の窯元の可能性は否定できません）');
-if(kilnCheck) lines.push('窯元確認: ' + kilnCheck.stampLabel + '／競合候補: ' + (kilnCheck.competitors.length ? kilnCheck.competitors.join('、') : 'なし') + (kilnCheck.priceBlock ? '／価格は窯元未確認のため表示していません' : (kilnCheck.caution ? '／窯元要確認' : '／価格への制限なし（真贋は未確認）')));
+if(kilnCheck) lines.push('窯元確認: ' + kilnCheck.stampLabel + '／競合候補: ' + (kilnCheck.competitors.length ? kilnCheck.competitors.join('、') : 'なし') + (kilnCheck.priceBlock ? '／価格は窯元未確認のため表示していません' : (kilnCheck.unverified ? '／AI参考価格は窯元未確認のため表示していません' : (kilnCheck.caution ? '／窯元要確認' : '／価格への制限なし（真贋は未確認）'))));
 if(lastValueAlert && lastValueAlert.possible){ const topConf2 = cands.length ? Math.max(...cands.map(c => c.confidence || 0)) : 0; const vad2 = valueAlertDetails(cands, band); lines.push(`高額ブランドの可能性・要確認: ${lastValueAlert.reason || ''}（${topConf2 >= 70 ? '有力なブランド候補あり・未確定' : 'ブランドは未特定'}）`); lines.push(`　ブランドの判定根拠: ${vad2.basisTxt}`); lines.push(`　シリーズ: ${vad2.seriesTxt}`); lines.push(`　参考価格: ${vad2.priceTxt}`); }
 if(!lastStampInfo || !lastStampInfo.used) lines.push('窯印画像照合: 未実施（見本未登録のため通常のAI認識のみ）');
 else if(sres.length) sres.forEach(r => lines.push(`窯印画像照合: 参考見本=${r.brand || '―'}／結果=${r.verdict || '―'}${(r.similarity != null && r.similarity !== '') ? `／類似度=${r.similarity}（AIの主観的な類似度で正解確率ではない）` : ''}／共通点=${(r.common_points || []).join('・') || '―'}／相違点=${(r.differing_points || []).join('・') || '―'}／判定=${r.judgment || '―'}${r.uncertainty ? '／不確実: ' + r.uncertainty : ''}`));
 else if(sresAll.length) lines.push('窯印画像照合: 対象と合わない見本のため照合結果は表示していない（対象外）');
 else lines.push('窯印画像照合: 見本を送信したが照合結果が返らなかった');
 if(sExcluded) lines.push(`窯印画像照合: 素材・ブランドが合わない見本${sExcluded}件は対象外として除外`);
-lines.push(band? `価格帯（中古）: ${band.low.toLocaleString()}〜${band.high.toLocaleString()}円［${band.basis}／単位: ${band.unit || '単位不明'}${band.count? '／数量: ' + band.count + '点': ''}${band.countNote? '（' + band.countNote + '）': ''}］ 判定: ${tier.name}`: '価格帯: 価格不明 判定: ' + tier.name + '（' + (antiquePossible() ? (antiqueRisk ? 'アプリ側の安全チェックで抑止' : 'AIの分類が古陶磁器・骨董品の可能性のため抑止') : priceUnknownDetail()) + '）');
+lines.push(band? `価格帯（中古）: ${band.low.toLocaleString()}〜${band.high.toLocaleString()}円［${band.basis}／単位: ${band.unit || '単位不明'}${band.count? '／数量: ' + band.count + '点': ''}${band.countNote? '（' + band.countNote + '）': ''}］ 判定: ${tier.name}${manualBandKilnNote(band) ? '／注意: ' + manualBandKilnNote(band) : ''}`: '価格帯: 価格不明 判定: ' + tier.name + '（' + (antiquePossible() ? (antiqueRisk ? 'アプリ側の安全チェックで抑止' : 'AIの分類が古陶磁器・骨董品の可能性のため抑止') : priceUnknownDetail()) + '）');
 if(!band && tier.name.startsWith('高額候補の可能性あり')) lines.push('高額の根拠: ' + ev.reasons.join('／'));
 if(band && priceWeaknesses().length) lines.push('価格の弱点: ' + priceWeaknesses().join('・'));
 if(band && band.unitKind && band.unitKind !== 'per_item') lines.push('価格単位要確認: ' + unitCautionText(band.unitKind));
@@ -1625,7 +1636,9 @@ const el = $('historyList'); if(!el) return;
 if(!appraisalHistory.length){ el.innerHTML = '<p class="small">履歴はまだありません。</p>'; return; }
 el.innerHTML = appraisalHistory.slice().reverse().map(e => {
 const d = e.data || {}; const pe = d.priceEstimate;
-const price = pe ? '<br>AI参考価格: ' + Number(pe.low).toLocaleString() + '〜' + Number(pe.high).toLocaleString() + '円（' + esc(pe.unit || '単位不明') + '）' : '';
+// C004補修: 履歴一覧でも、窯元未確認のAI参考価格は金額を表示しない（保存データ自体は変更しない）
+const kcH = pe ? assessKilnVerification({ identification_candidates: d.candidates || [], observed_facts: { backstamp_text: (d.facts || {}).back || '', backstamp_logo: (d.facts || {}).logo || '' } }) : null;
+const price = pe ? (aiPriceKilnBlocked(kcH) ? '<br>AI参考価格: 窯元未確認のため表示を保留しています' : '<br>AI参考価格: ' + Number(pe.low).toLocaleString() + '〜' + Number(pe.high).toLocaleString() + '円（' + esc(pe.unit || '単位不明') + '）') : '';
 const when = e.savedAt ? new Date(e.savedAt).toLocaleString('ja-JP') : '';
 return '<div class="history-item" data-hid="' + esc(e.id) + '" style="border:1px solid #ddd;border-radius:8px;padding:8px;margin:6px 0">'
 + '<p style="margin:0"><strong>' + esc(historyTitle(e)) + '</strong><br><span class="small">' + esc(when) + price + '</span></p>'
@@ -1782,6 +1795,17 @@ if(Array.isArray(s.dmg)) s.dmg.forEach(id => { const el = document.getElementByI
 if(!$('candidates').children.length) $('candidates').appendChild(candidateEl());
 if(s.resultHtml) $('result').innerHTML = s.resultHtml;
 if(s.lastSummary){ lastSummary = s.lastSummary; $('btnCopy').disabled = false;}
+// v2.3.16 C004補修: 復元時に窯元確認を現在の基準（転記のみ）で再評価し、古いAI参考価格が新しい安全ルールを通過しない場合は表示を保留する。
+// 保存されていた priceEstimate の値自体は書き換えない（collectState は従来どおり保持する）。結果HTMLとコピー用テキストは、保留後の内容で再生成する
+try{
+const kcNow = assessKilnVerification({ identification_candidates: readCandidates(), observed_facts: { backstamp_text: $('factBackstamp').value, backstamp_logo: $('factLogo').value } });
+if(kcNow) kilnCheck = kcNow;
+}catch(e){}
+if(aiPriceHeldForKiln()){
+lastPriceStatus = { code: 'kiln_unverified', text: '窯元の確認が取れていないため、保存されていたAI参考価格を表示していません（' + kilnCheck.stampLabel + '）' };
+renderPriceEst();
+try{ renderResult(); }catch(e){}
+}
 renderBand();
 }catch(e){}
 }
