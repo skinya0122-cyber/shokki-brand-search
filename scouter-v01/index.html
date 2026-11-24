@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>食器AIスカウター v0.1</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 0; padding: 12px; line-height: 1.55; }
+  h1 { font-size: 20px; margin: 4px 0 10px; }
+  h2 { font-size: 16px; margin: 18px 0 6px; }
+  label { display: block; font-size: 13px; margin-top: 10px; }
+  input[type="text"], input[type="number"], input[type="password"], select, textarea { width: 100%; box-sizing: border-box; font-size: 16px; padding: 8px; margin-top: 4px; }
+  button { font-size: 16px; padding: 10px 14px; margin: 8px 4px 0 0; border-radius: 8px; }
+  .primary { font-weight: bold; }
+  .photo-box { border: 1px solid #999; border-radius: 8px; padding: 8px; margin-top: 10px; }
+  .photo-box img { max-width: 100%; border-radius: 6px; display: none; }
+  .hint { font-size: 12px; opacity: 0.8; }
+  .priority { font-size: 24px; font-weight: bold; padding: 12px; border-radius: 10px; text-align: center; margin: 10px 0; }
+  .p-recommend { background: #d9f2d9; color: #14551c; }
+  .p-check { background: #fdf0c8; color: #6b5310; }
+  .p-low { background: #e8e8e8; color: #444; }
+  .warn { background: #fde8e8; border-radius: 8px; padding: 8px; margin: 6px 0; font-size: 14px; }
+  .note { background: #eef3fb; border-radius: 8px; padding: 8px; margin: 6px 0; font-size: 14px; }
+  .item-card { border: 1px solid #999; border-radius: 8px; padding: 8px; margin: 8px 0; }
+  .item-card img { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; }
+  .error { color: #b00020; font-weight: bold; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<h1>食器AIスカウター v0.1</h1>
+<p class="hint">表面と裏面の写真から、3,000円以上の可能性がある品を選別します。判定はAI参考推定に基づく目安で、確定した鑑定ではありません。</p>
+
+<section id="screen-input">
+  <label>Gemini APIキー（保存されません）
+    <input type="password" id="apiKey" autocomplete="off" placeholder="APIキー">
+  </label>
+  <label>モデル
+    <select id="modelId"></select>
+  </label>
+
+  <div class="photo-box">
+    <label>表面の写真
+      <input type="file" id="photoFront" accept="image/*">
+    </label>
+    <img id="previewFront" alt="表面の写真プレビュー">
+  </div>
+  <div class="photo-box">
+    <label>裏面（バックスタンプ）の写真
+      <input type="file" id="photoBack" accept="image/*">
+    </label>
+    <p class="hint">銘が大きく写るように撮ってください。裏面は文字が読める解像度を優先して送信します。</p>
+    <img id="previewBack" alt="裏面の写真プレビュー">
+  </div>
+
+  <label>数量
+    <input type="number" id="quantity" value="1" min="1" max="999" inputmode="numeric">
+  </label>
+  <label>箱の有無
+    <select id="boxStatus">
+      <option value="不明" selected>不明</option>
+      <option value="箱あり">箱あり（共箱・化粧箱など）</option>
+      <option value="箱なし">箱なし</option>
+    </select>
+  </label>
+  <label>見つけた場所（任意）
+    <input type="text" id="foundPlace">
+  </label>
+  <label>売値（任意・円）
+    <input type="number" id="askingPrice" min="0" inputmode="numeric" placeholder="出品・店頭の価格（成約価格ではありません）">
+  </label>
+  <label>メモ（任意）
+    <textarea id="memo" rows="2"></textarea>
+  </label>
+
+  <button id="btnJudge" class="primary">簡易判定する</button>
+  <p id="judgeStatus" class="hint"></p>
+  <p id="judgeError" class="error"></p>
+</section>
+
+<section id="screen-result" hidden>
+  <h2>判定結果</h2>
+  <div id="resultPriority" class="priority"></div>
+  <div id="resultWarnings"></div>
+  <h2>判定理由</h2>
+  <ul id="resultReasons"></ul>
+  <h2>候補</h2>
+  <div id="resultCandidates"></div>
+  <h2>バックスタンプ・銘</h2>
+  <div id="resultMark"></div>
+  <h2>価格（AI参考推定）</h2>
+  <div id="resultPrice"></div>
+  <div id="resultReference"></div>
+  <button id="btnSave" class="primary">取り置きリストへ保存</button>
+  <button id="btnAgain">もう1点判定する</button>
+  <p id="saveStatus" class="hint"></p>
+</section>
+
+<section id="screen-list">
+  <h2>取り置きリスト</h2>
+  <p id="listCounts" class="hint"></p>
+  <label>表示する判定
+    <select id="listFilter">
+      <option value="">すべて</option>
+      <option value="取り置き推奨">取り置き推奨</option>
+      <option value="要確認">要確認</option>
+      <option value="低優先">低優先</option>
+    </select>
+  </label>
+  <div id="listItems"></div>
+  <button id="btnExport">JSONバックアップを書き出す</button>
+  <label>バックアップを読み込む
+    <input type="file" id="importFile" accept="application/json">
+  </label>
+  <p id="backupStatus" class="hint"></p>
+  <button id="btnClearList">リストを全消去</button>
+</section>
+
+<script>
+'use strict';
+/* ===== 基本設定（ブランドサーチとは保存領域を分離する） ===== */
+const APP_ID = 'shokki-scouter-v01';
+const WORK_KEY = 'shokki-scouter-v01-work';
+const LIST_KEY = 'shokki-scouter-v01-list';
+const COUNTER_KEY = 'shokki-scouter-v01-counter';
+const DEVICE_KEY = 'shokki-scouter-v01-device';
+const BACKUP_APP = 'shokki-scouter';
+const BACKUP_VERSION = 1;
+const MODELS = [
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash（v2.3.17と同じモデル）' },
+  { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite（代替: 軽量版）' },
+  { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash（代替: 前世代Flash）' },
+  { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite（代替: 軽量版）' }
+];
+const GEN_CONFIG = { temperature: 0.2 };
+const FRONT_MAX = 1280;   /* 表面の長辺上限 */
+const BACK_MAX = 2048;    /* 裏面は判読を優先して長辺を大きく残す */
+const FRONT_QUALITY = 0.85;
+const BACK_QUALITY = 0.92;
+
+/* 一般的な産地・種別・素材の表記だけではブランドの裏付けにしない */
+const GENERIC_TERMS = ['LIMOGES', 'リモージュ', '九谷', '有田', '伊万里', '古伊万里', '九谷焼', '有田焼', '伊万里焼',
+  'BONE CHINA', 'ボーンチャイナ', 'FINE CHINA', 'MADE IN JAPAN', 'JAPAN', '日本製', 'PORCELAIN', 'ポーセリン', '磁器', '陶器', 'ENGLAND', 'FRANCE'];
+/* 具体的な窯元・ブランド・作家名として扱う一覧（照合用） */
+const SPECIFIC_NAMES = ['源右衛門窯', '源右衛門', '柿右衛門', '今右衛門', '香蘭社', '深川製磁', 'ノリタケ', 'NORITAKE',
+  '大倉陶園', 'ウェッジウッド', 'WEDGWOOD', 'マイセン', 'MEISSEN', 'ロイヤルコペンハーゲン', 'ROYAL COPENHAGEN',
+  'バカラ', 'BACCARAT', 'ミントン', 'MINTON', 'リチャードジノリ', 'RICHARD GINORI', 'ジノリ', 'ヘレンド', 'HEREND',
+  'スポード', 'SPODE', 'ロイヤルドルトン', 'ROYAL DOULTON', 'エインズレイ', 'AYNSLEY', 'ナルミ', 'NARUMI',
+  'ロイヤルウースター', 'ROYAL WORCESTER', 'コールポート', 'COALPORT', 'レイノー', 'RAYNAUD', 'ラリック', 'LALIQUE',
+  '人間国宝', '徳田八十吉', '酒井田柿右衛門'];
+const HIGH_VALUE_NAMES = ['源右衛門', '柿右衛門', '今右衛門', '香蘭社', '深川製磁', 'マイセン', 'MEISSEN', 'バカラ', 'BACCARAT',
+  'ウェッジウッド', 'WEDGWOOD', 'ロイヤルコペンハーゲン', 'ROYAL COPENHAGEN', 'ヘレンド', 'HEREND', '大倉陶園', 'ラリック', 'LALIQUE', '徳田八十吉', '酒井田柿右衛門'];
+
+/* 登録見本の特徴メモ（参考表示のみ。裏付けには使わない。画像は含めない） */
+const MARKS_REFERENCE = [
+  { mark_id: 'M001', brand: '源右衛門窯',
+    features: '紺青色の染付銘。高台の内側に、筆書き風の文字が縦1列に左下から右上へ斜めに並ぶ。崩した草書風で数文字が連なって見える。' }
+];
+
+const $ = id => document.getElementById(id);
+const state = { frontData: null, backData: null, lastResult: null, busy: false };
+
+/* ===== 保存（作業中データと取り置きリストを分離） ===== */
+function loadList() {
+  try { const v = JSON.parse(localStorage.getItem(LIST_KEY) || '[]'); return Array.isArray(v) ? v : []; }
+  catch (e) { return []; }
+}
+const STORAGE_SOFT_LIMIT = 4500000; /* ブラウザの保存上限（約5M文字）より手前で止める目安 */
+function saveList(items) {
+  const s = JSON.stringify(items);
+  if (s.length > STORAGE_SOFT_LIMIT) {
+    const e = new Error('保存容量の上限に近づいたため保存できませんでした。バックアップを書き出してから、不要な商品を削除してください');
+    e.code = 'SCOUTER_QUOTA';
+    throw e;
+  }
+  localStorage.setItem(LIST_KEY, s);
+}
+function saveWork() {
+  try { localStorage.setItem(WORK_KEY, JSON.stringify({ quantity: $('quantity').value, boxStatus: $('boxStatus').value, foundPlace: $('foundPlace').value, askingPrice: $('askingPrice').value, memo: $('memo').value })); } catch (e) {}
+}
+function loadWork() {
+  try {
+    const w = JSON.parse(localStorage.getItem(WORK_KEY) || 'null'); if (!w) return;
+    if (w.quantity) $('quantity').value = w.quantity;
+    if (w.boxStatus) $('boxStatus').value = w.boxStatus;
+    if (w.foundPlace) $('foundPlace').value = w.foundPlace;
+    if (w.askingPrice) $('askingPrice').value = w.askingPrice;
+    if (w.memo) $('memo').value = w.memo;
+  } catch (e) {}
+}
+/* 採番は独立カウンタで管理し、削除した番号を再利用しない */
+function storedCounter() {
+  const v = parseInt(localStorage.getItem(COUNTER_KEY) || '0', 10);
+  return isNaN(v) ? 0 : v;
+}
+function maxLocalNumber(items) {
+  let max = 0;
+  for (const it of items || []) {
+    const m = /^L(\d+)$/.exec(it.local_id || '');
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return max;
+}
+function nextLocalId(items) {
+  const max = Math.max(storedCounter(), maxLocalNumber(items));
+  return 'L' + String(max + 1).padStart(3, '0');
+}
+function allocateLocalId(items) {
+  const id = nextLocalId(items || loadList());
+  try { localStorage.setItem(COUNTER_KEY, String(parseInt(id.slice(1), 10))); } catch (e) {}
+  return id;
+}
+function bumpCounter(items) {
+  const n = Math.max(storedCounter(), maxLocalNumber(items));
+  try { localStorage.setItem(COUNTER_KEY, String(n)); } catch (e) {}
+}
+function deviceId() {
+  let d = localStorage.getItem(DEVICE_KEY);
+  if (!d) {
+    d = 'dev-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    try { localStorage.setItem(DEVICE_KEY, d); } catch (e) {}
+  }
+  return d;
+}
+
+/* ===== 写真（表面と裏面で縮小設定を分ける） ===== */
+function resizeImage(file, maxEdge, quality) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+async function onPhoto(inputId, previewId, key, maxEdge, quality) {
+  const input = $(inputId);
+  if (!input.files || !input.files[0]) return;
+  const data = await resizeImage(input.files[0], maxEdge, quality);
+  state[key] = data;
+  const prev = $(previewId);
+  prev.src = data; prev.style.display = 'block';
+}
+
+/* ===== Gemini への問い合わせ ===== */
+const PROMPT = [
+  'あなたは中古食器の簡易スカウト補助です。表面と裏面（バックスタンプ）の写真2枚から、候補と読み取れた情報をJSONだけで返してください。説明文は付けないでください。',
+  'ルール: 写真で読めた文字と推測で補った文字を必ず分けること。一般的な産地表記（LIMOGES、九谷、有田、伊万里、Bone China、Made in Japanなど）だけではブランドと断定しないこと。分からない項目は null または「不明」とすること。価格は1点あたりの中古販売価格の参考推定で、出品価格ではなく成約の目安として幅を持たせること。分からなければ null にすること。',
+  '返すJSONの形式:',
+  '{',
+  ' "classification": "現代のブランド食器" | "古陶磁器の可能性" | "判定不能",',
+  ' "material": "陶磁器" | "ガラス" | "クリスタル" | "不明",',
+  ' "brand_candidate": {"name": 文字列またはnull, "confidence": 0から100の数値},',
+  ' "kiln_candidate": {"name": 文字列またはnull, "confidence": 数値},',
+  ' "artist_candidate": {"name": 文字列またはnull, "confidence": 数値},',
+  ' "series_candidate": 文字列またはnull,',
+  ' "pattern": 文字列またはnull,',
+  ' "origin": 文字列またはnull,',
+  ' "era": 文字列またはnull,',
+  ' "mark_present": true/false,',
+  ' "mark_type": "手書き銘" | "印判" | "刻印" | "落款" | "記号のみ" | "ロゴ・刻印（西洋）" | "なし" | "不明",',
+  ' "mark_reading_status": "読めた" | "一部のみ" | "読めない" | "対象なし",',
+  ' "mark_read_chars": 読めた文字だけの文字列（読めなければ空文字）,',
+  ' "mark_guessed_chars": 推測で補った文字（なければ空文字）,',
+  ' "symbol_description": 記号のみのマークの場合の形状・モチーフ・色の説明（なければ空文字）,',
+  ' "logo_text": ロゴ・刻印から読めた文字（なければ空文字）,',
+  ' "logo_status": "読めた" | "一部のみ" | "なし",',
+  ' "ai_price_band": {"low": 数値, "high": 数値} または null',
+  '}'
+].join('\n');
+
+function extractJson(text) {
+  if (!text) return null;
+  let t = String(text).trim();
+  t = t.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  const start = t.indexOf('{'), end = t.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try { return JSON.parse(t.slice(start, end + 1)); } catch (e) { return null; }
+}
+function normalizeResponse(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.classification == null || raw.mark_type == null) return null; /* 必須項目が欠けた応答は不完全として扱う */
+  const cand = c => (c && typeof c === 'object') ? { name: c.name || null, confidence: (typeof c.confidence === 'number' ? c.confidence : null) } : { name: null, confidence: null };
+  let band = null;
+  if (raw.ai_price_band && typeof raw.ai_price_band.low === 'number' && typeof raw.ai_price_band.high === 'number' && raw.ai_price_band.high > 0) {
+    band = { low: Math.max(0, raw.ai_price_band.low), high: Math.max(0, raw.ai_price_band.high) };
+    if (band.low > band.high) { const t = band.low; band.low = band.high; band.high = t; }
+  }
+  return {
+    classification: String(raw.classification),
+    material: ['陶磁器', 'ガラス', 'クリスタル'].includes(raw.material) ? raw.material : '不明',
+    brand_candidate: cand(raw.brand_candidate),
+    kiln_candidate: cand(raw.kiln_candidate),
+    artist_candidate: cand(raw.artist_candidate),
+    series_candidate: raw.series_candidate || null,
+    pattern: raw.pattern || null,
+    origin: raw.origin || null,
+    era: raw.era || null,
+    mark_present: raw.mark_present === true,
+    mark_type: String(raw.mark_type),
+    mark_reading_status: ['読めた', '一部のみ', '読めない', '対象なし'].includes(raw.mark_reading_status) ? raw.mark_reading_status : (raw.mark_present ? '読めない' : '対象なし'),
+    mark_read_chars: String(raw.mark_read_chars || ''),
+    mark_guessed_chars: String(raw.mark_guessed_chars || ''),
+    symbol_description: String(raw.symbol_description || ''),
+    logo_text: String(raw.logo_text || ''),
+    logo_status: ['読めた', '一部のみ', 'なし'].includes(raw.logo_status) ? raw.logo_status : (raw.logo_text ? '読めた' : 'なし'),
+    ai_price_band: band
+  };
+}
+async function callGemini(apiKey, model, frontData, backData) {
+  const parts = [{ text: PROMPT }];
+  for (const d of [frontData, backData]) {
+    const m = /^data:image\/[a-z]+;base64,(.+)$/.exec(d || '');
+    if (m) parts.push({ inline_data: { mime_type: 'image/jpeg', data: m[1] } });
+  }
+  const body = { contents: [{ parts }], generationConfig: GEN_CONFIG };
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) { /* 自動リトライは最大1回 */
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (res.status === 503 && attempt === 0) { lastErr = new Error('混雑しています（503）'); await new Promise(r => setTimeout(r, 1500)); continue; }
+      if (!res.ok) throw new Error('APIエラー: HTTP ' + res.status);
+      const json = await res.json();
+      const text = json && json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts ? json.candidates[0].content.parts.map(p => p.text || '').join('') : '';
+      const parsed = extractJson(text);
+      const normalized = normalizeResponse(parsed);
+      if (!normalized) throw new Error('応答を読み取れませんでした');
+      return normalized;
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 0 && /503|network|Failed to fetch/i.test(String(e && e.message))) { await new Promise(r => setTimeout(r, 1500)); continue; }
+      throw e;
+    }
+  }
+  throw lastErr || new Error('判定できませんでした');
+}
+</script>
+<script>
+'use strict';
+/* ===== 照合（裏付け・矛盾）: 読めた文字と候補名をアプリ側で突き合わせる ===== */
+function rootName(name) {
+  if (!name) return '';
+  let s = String(name).toUpperCase().replace(/[\s・　]/g, '');
+  if (s.endsWith('窯')) s = s.slice(0, -1);
+  return s;
+}
+function stripGeneric(text) {
+  let s = String(text || '').toUpperCase();
+  for (const g of GENERIC_TERMS) s = s.split(g.toUpperCase()).join(' ');
+  return s;
+}
+/* 日本語名とラテン文字名の同一ブランドを結びつける（候補は日本語、ロゴはラテン文字が多いため） */
+const NAME_ALIASES = [['ウェッジウッド', 'WEDGWOOD'], ['マイセン', 'MEISSEN'], ['ロイヤルコペンハーゲン', 'ROYAL COPENHAGEN'],
+  ['バカラ', 'BACCARAT'], ['ミントン', 'MINTON'], ['ヘレンド', 'HEREND'], ['ノリタケ', 'NORITAKE'], ['スポード', 'SPODE'],
+  ['ロイヤルドルトン', 'ROYAL DOULTON'], ['エインズレイ', 'AYNSLEY'], ['ナルミ', 'NARUMI'], ['ラリック', 'LALIQUE'],
+  ['レイノー', 'RAYNAUD'], ['ロイヤルウースター', 'ROYAL WORCESTER'], ['コールポート', 'COALPORT'], ['リチャードジノリ', 'RICHARD GINORI', 'ジノリ']];
+function canonicalRoot(name) {
+  const r = rootName(name);
+  for (const g of NAME_ALIASES) if (g.some(a => rootName(a) === r)) return rootName(g[0]);
+  return r;
+}
+function aliasVariants(name) {
+  const r = rootName(name);
+  for (const g of NAME_ALIASES) if (g.some(a => rootName(a) === r)) return g;
+  return [name];
+}
+function findSpecificNames(text) {
+  const cleaned = stripGeneric(text);
+  const found = [];
+  for (const n of SPECIFIC_NAMES) {
+    if (cleaned.includes(n.toUpperCase().replace(/[\s・　]/g, ''))) {
+      const r = canonicalRoot(n);
+      if (!found.includes(r)) found.push(r);
+    }
+  }
+  return found;
+}
+function candidateRoots(resp) {
+  const roots = [];
+  for (const c of [resp.brand_candidate, resp.kiln_candidate, resp.artist_candidate]) {
+    if (c && c.name) { const r = canonicalRoot(c.name); if (r && !roots.includes(r)) roots.push(r); }
+  }
+  return roots;
+}
+function assessCorroboration(resp) {
+  const readText = String(resp.mark_read_chars || '');
+  const logoText = String(resp.logo_text || '');
+  const found = [...new Set([...findSpecificNames(readText), ...findSpecificNames(logoText)])];
+  const candRoots = candidateRoots(resp);
+  /* 候補名そのものが読めた文字・ロゴ文字に含まれる場合も裏付けとする（一般表記だけの一致は除く） */
+  let directMatch = false;
+  const cleanedRead = stripGeneric(readText).replace(/[\s・　]/g, '');
+  const cleanedLogo = stripGeneric(logoText).toUpperCase().replace(/[\s・　]/g, '');
+  for (const c of [resp.brand_candidate, resp.kiln_candidate, resp.artist_candidate]) {
+    if (!c || !c.name) continue;
+    for (const v of aliasVariants(c.name)) {
+      const r = rootName(v);
+      if (r && (cleanedRead.includes(r) || cleanedLogo.includes(r))) directMatch = true;
+    }
+  }
+  const corroborated = directMatch || candRoots.some(r => found.includes(r));
+  /* 矛盾: 読めた文字に候補と異なる具体名だけがある場合。候補が読みに含まれる場合は矛盾にしない */
+  const contradiction = found.length > 0 && !corroborated;
+  return { corroborated, contradiction, foundNames: found };
+}
+function isArtistPossible(resp) {
+  if (resp.artist_candidate && resp.artist_candidate.name) return true;
+  if (resp.mark_type === '手書き銘' || resp.mark_type === '落款') return true;
+  if ((resp.mark_reading_status === '一部のみ' || resp.mark_reading_status === '読めない') && resp.mark_type === '刻印') return true;
+  return false;
+}
+function hasHighValueCandidate(resp) {
+  const names = [resp.brand_candidate, resp.kiln_candidate, resp.artist_candidate].map(c => (c && c.name) || '').join(' ').toUpperCase();
+  return HIGH_VALUE_NAMES.some(n => names.includes(n.toUpperCase())) || findSpecificNames(names).some(r => HIGH_VALUE_NAMES.some(h => canonicalRoot(h) === r));
+}
+function lowPriorityExclusions(resp, input) {
+  const hits = [];
+  if (['手書き銘', '刻印', '落款', '記号のみ'].includes(resp.mark_type)) hits.push('銘の種類（' + resp.mark_type + '）');
+  if (resp.mark_present && (resp.mark_reading_status === '読めない' || resp.mark_reading_status === '一部のみ')) hits.push('銘が完全には読めていない');
+  if (isArtistPossible(resp)) hits.push('作家物の可能性');
+  if (input.box_status === '箱あり') hits.push('箱あり');
+  if (input.box_status === '不明') hits.push('箱の有無が不明');
+  if ((resp.material === 'ガラス' || resp.material === 'クリスタル') && (!resp.mark_present || resp.mark_reading_status === '読めない' || resp.mark_reading_status === '対象なし')) hits.push('無銘・判読不能の' + resp.material);
+  if (hasHighValueCandidate(resp)) hits.push('高額候補あり');
+  return hits;
+}
+
+/* ===== 3段階判定（最終設計書の9順位） ===== */
+function decidePriority(resp, input) {
+  const qty = Math.max(1, parseInt(input.quantity, 10) || 1);
+  const warnings = [];
+  if (!resp || typeof resp !== 'object' || !resp.classification || !resp.mark_type) {
+    return { priority: '要確認', rank: 0, reasons: ['AIの応答が不完全だったため、安全側で「要確認」にしました'], warnings, corroboration: { corroborated: false, contradiction: false, foundNames: [] }, priceView: null };
+  }
+  const corr = assessCorroboration(resp);
+  const band = resp.ai_price_band || null;
+  const priceView = band ? { perItem: band, qty, total: qty > 1 ? { low: band.low * qty, high: band.high * qty } : null } : null;
+  if (isArtistPossible(resp)) warnings.push('作家物の可能性があります。価格だけで判断せず、詳細調査を検討してください。');
+  if (resp.mark_guessed_chars) warnings.push('銘の一部はAIの推測で補われています（読めた文字とは分けて表示しています）。');
+  const done = (priority, rank, reason) => ({ priority, rank, reasons: [reason], warnings, corroboration: corr, priceView });
+  /* 順位1: 分類の前提 */
+  if (resp.classification === '古陶磁器の可能性' || resp.classification === '判定不能') {
+    return done('要確認', 1, '分類が「' + resp.classification + '」のため、AI参考価格では判断せず「要確認」にしました');
+  }
+  /* 順位2: 読みと候補の矛盾 */
+  if (corr.contradiction) {
+    return done('要確認', 2, '読めた銘・ロゴ（' + corr.foundNames.join('、') + '）とAIの候補が食い違うため「要確認」にしました');
+  }
+  /* 順位3: 記号のみ */
+  if (resp.mark_type === '記号のみ') {
+    return done('要確認', 3, '記号のみのマークは候補との一致を確認できないため「要確認」にしました');
+  }
+  /* 順位4: 価格不明 */
+  if (!band) {
+    return done('要確認', 4, 'AI参考価格が不明のため、低価格と決めつけず「要確認」にしました');
+  }
+  const low = band.low, high = band.high;
+  const totalLow = low * qty, totalHigh = high * qty;
+  const overLine = low >= 3000 || totalLow >= 3000;
+  /* 順位5・6: 3,000円以上 */
+  if (overLine && corr.corroborated) {
+    return done('取り置き推奨', 5, 'AI参考価格帯' + (qty > 1 && low < 3000 ? '（数量合計）' : '') + 'の下限が3,000円以上で、銘・ロゴの読みによる裏付けがあります');
+  }
+  if (overLine && !corr.corroborated) {
+    return done('要確認', 6, 'AI参考価格帯は3,000円以上ですが、銘・ロゴによる裏付けが取れていないため「要確認」にしました（未確認の高額候補）');
+  }
+  /* 順位7: 3,000円をまたぐ */
+  if ((low < 3000 && high >= 3000) || (totalLow < 3000 && totalHigh >= 3000)) {
+    return done('要確認', 7, 'AI参考価格帯が3,000円をまたぐため「要確認」にしました');
+  }
+  /* 順位8: 低優先（除外条件が1つもない場合だけ） */
+  const excl = lowPriorityExclusions(resp, input);
+  if (high < 3000 && totalHigh < 3000 && excl.length === 0) {
+    return done('低優先', 8, 'AI参考価格帯の上限が3,000円未満で、見逃し防止の除外条件にも当たらないため「低優先」にしました');
+  }
+  /* 順位9: 安全側の既定 */
+  const extra = excl.length ? '（低優先にしない理由: ' + excl.join('、') + '）' : '';
+  return done('要確認', 9, '低優先とは言い切れない要素があるため「要確認」にしました' + extra);
+}
+
+/* ===== 見本の参考表示（裏付けには使わない） ===== */
+function referenceNote(resp) {
+  const roots = candidateRoots(resp);
+  for (const ref of MARKS_REFERENCE) {
+    if (roots.includes(rootName(ref.brand))) {
+      return '参考情報: 登録見本' + ref.mark_id + '（' + ref.brand + '）の特徴メモ: ' + ref.features + ' ※これは参考表示であり、判定の裏付けには使っていません。';
+    }
+  }
+  return '';
+}
+
+/* ===== 結果の表示 ===== */
+function fmtYen(n) { return Number(n).toLocaleString('ja-JP') + '円'; }
+function renderResult(resp, decision, input) {
+  const box = $('resultPriority');
+  box.textContent = decision.priority;
+  box.className = 'priority ' + (decision.priority === '取り置き推奨' ? 'p-recommend' : decision.priority === '要確認' ? 'p-check' : 'p-low');
+  const warnBox = $('resultWarnings');
+  warnBox.textContent = '';
+  for (const w of decision.warnings) {
+    const d = document.createElement('div');
+    d.className = 'warn';
+    d.textContent = '注意: ' + w;
+    warnBox.appendChild(d);
+  }
+  const reasonList = $('resultReasons');
+  reasonList.textContent = '';
+  for (const r of decision.reasons) {
+    const li = document.createElement('li');
+    li.textContent = r;
+    reasonList.appendChild(li);
+  }
+  const cand = [];
+  const addCand = (label, c) => { if (c && c.name) cand.push(label + ': ' + c.name + (c.confidence != null ? '（確信度 ' + Math.min(95, c.confidence) + '%）' : '')); };
+  addCand('ブランド', resp.brand_candidate); addCand('窯元', resp.kiln_candidate); addCand('作家', resp.artist_candidate);
+  if (resp.series_candidate) cand.push('シリーズ候補: ' + resp.series_candidate);
+  if (resp.pattern) cand.push('柄: ' + resp.pattern);
+  cand.push('素材: ' + resp.material);
+  if (resp.origin) cand.push('産地: ' + resp.origin);
+  if (resp.era) cand.push('推定年代: ' + resp.era);
+  $('resultCandidates').textContent = cand.join('／') || '候補なし';
+  const mark = [];
+  mark.push('銘の種類: ' + resp.mark_type);
+  mark.push('読み取り状態: ' + resp.mark_reading_status);
+  mark.push('読めた文字: ' + (resp.mark_read_chars || '（なし）'));
+  if (resp.mark_guessed_chars) mark.push('推測で補った文字: ' + resp.mark_guessed_chars);
+  if (resp.symbol_description) mark.push('記号の説明: ' + resp.symbol_description);
+  if (resp.logo_text) mark.push('ロゴ・刻印の読み取り: ' + resp.logo_text);
+  mark.push('裏付け: ' + (decision.corroboration.corroborated ? 'あり（読めた文字・ロゴと候補が一致）' : 'なし'));
+  $('resultMark').textContent = mark.join('／');
+  if (decision.priceView) {
+    const pv = decision.priceView;
+    let t = '1点あたり ' + fmtYen(pv.perItem.low) + '〜' + fmtYen(pv.perItem.high) + '（AI参考推定）';
+    if (pv.total) t += '／数量' + pv.qty + '点の参考計算: ' + fmtYen(pv.total.low) + '〜' + fmtYen(pv.total.high) + '（単価×数量の単純計算で、セットの実売価格ではありません）';
+    $('resultPrice').textContent = t;
+  } else {
+    $('resultPrice').textContent = '価格不明（AI参考推定なし）。低価格とは限りません。';
+  }
+  const ref = referenceNote(resp);
+  const refBox = $('resultReference');
+  refBox.textContent = '';
+  if (ref) {
+    const d = document.createElement('div');
+    d.className = 'note';
+    d.textContent = ref;
+    refBox.appendChild(d);
+  }
+  $('screen-result').hidden = false;
+}
+
+/* ===== 取り置きリスト ===== */
+function buildItem(resp, decision, input) {
+  const items = loadList();
+  const localId = allocateLocalId(items);
+  return {
+    local_id: localId,
+    uid: deviceId() + ':' + localId + ':' + Date.now().toString(36),
+    created_at: new Date().toISOString(),
+    quantity: Math.max(1, parseInt(input.quantity, 10) || 1),
+    box_status: input.box_status || '不明',
+    found_place: input.found_place || null,
+    asking_price_jpy: input.asking_price !== '' && input.asking_price != null ? Number(input.asking_price) : null,
+    memo: input.memo || '',
+    photos: { front: state.frontData, back: state.backData },
+    response: resp,
+    priority: decision.priority,
+    decision_rank: decision.rank,
+    decision_reasons: decision.reasons,
+    decision_warnings: decision.warnings,
+    corroborated: decision.corroboration.corroborated
+  };
+}
+function renderList() {
+  const items = loadList();
+  const filter = $('listFilter').value;
+  const counts = { '取り置き推奨': 0, '要確認': 0, '低優先': 0 };
+  for (const it of items) if (counts[it.priority] != null) counts[it.priority]++;
+  const usedChars = (localStorage.getItem(LIST_KEY) || '').length;
+  let capacityNote = '保存容量の目安: 約 ' + (usedChars / 1000000).toFixed(1) + ' MB 使用中';
+  if (items.length > 0) {
+    const avg = Math.max(1, Math.round(usedChars / items.length));
+    const rest = Math.max(0, Math.floor((STORAGE_SOFT_LIMIT - usedChars) / avg));
+    capacityNote += '（写真の内容により変わりますが、あと約 ' + rest + ' 件が目安）';
+  }
+  $('listCounts').textContent = '合計 ' + items.length + ' 件（取り置き推奨 ' + counts['取り置き推奨'] + '／要確認 ' + counts['要確認'] + '／低優先 ' + counts['低優先'] + '）。' + capacityNote;
+  const shown = items.filter(it => !filter || it.priority === filter);
+  const container = $('listItems');
+  container.textContent = '';
+  if (!shown.length) {
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.textContent = '保存された商品はありません。';
+    container.appendChild(p);
+    return;
+  }
+  for (const it of shown) {
+    const cand = (it.response && it.response.brand_candidate && it.response.brand_candidate.name) || (it.response && it.response.kiln_candidate && it.response.kiln_candidate.name) || '候補なし';
+    const card = document.createElement('div');
+    card.className = 'item-card';
+    if (it.photos && it.photos.front) { const img = document.createElement('img'); img.src = it.photos.front; img.alt = ''; card.appendChild(img); }
+    if (it.photos && it.photos.back) { const img = document.createElement('img'); img.src = it.photos.back; img.alt = ''; card.appendChild(img); }
+    const line = document.createElement('div');
+    const strong = document.createElement('strong');
+    strong.textContent = it.local_id;
+    line.appendChild(strong);
+    line.appendChild(document.createTextNode(' ' + it.priority + '／' + cand + '／数量' + it.quantity + '／箱: ' + it.box_status));
+    card.appendChild(line);
+    const reason = document.createElement('div');
+    reason.className = 'hint';
+    reason.textContent = (it.decision_reasons || []).join(' ');
+    card.appendChild(reason);
+    const btn = document.createElement('button');
+    btn.textContent = '削除';
+    btn.addEventListener('click', () => {
+      saveList(loadList().filter(x => x.local_id !== it.local_id));
+      renderList();
+    });
+    card.appendChild(btn);
+    container.appendChild(card);
+  }
+}
+
+/* ===== JSONバックアップ ===== */
+function buildExport(items) {
+  return { app: BACKUP_APP, version: BACKUP_VERSION, app_id: APP_ID, exported_at: new Date().toISOString(), items: items || loadList() };
+}
+const MAX_PHOTO_CHARS = 9000000; /* 写真データの上限（約9MB分の文字列） */
+function isValidPhotoData(v) {
+  return v == null || (typeof v === 'string' && v.startsWith('data:image/') && v.length <= MAX_PHOTO_CHARS);
+}
+function isValidImportItem(it) {
+  if (!it || typeof it !== 'object') return false;
+  if (!/^L\d{3,}$/.test(it.local_id || '')) return false;
+  if (!['取り置き推奨', '要確認', '低優先'].includes(it.priority)) return false;
+  if (it.quantity != null && (!Number.isFinite(Number(it.quantity)) || Number(it.quantity) < 1 || Number(it.quantity) > 999)) return false;
+  if (it.box_status != null && !['箱あり', '箱なし', '不明'].includes(it.box_status)) return false;
+  if (it.photos != null) {
+    if (typeof it.photos !== 'object' || !isValidPhotoData(it.photos.front) || !isValidPhotoData(it.photos.back)) return false;
+  }
+  if (it.decision_reasons != null && !Array.isArray(it.decision_reasons)) return false;
+  if (it.response != null && typeof it.response !== 'object') return false;
+  return true;
+}
+function sanitizeImportItem(it) {
+  const clean = Object.assign({}, it);
+  clean.decision_reasons = Array.isArray(it.decision_reasons) ? it.decision_reasons.filter(x => typeof x === 'string').map(x => x.slice(0, 500)) : [];
+  clean.decision_warnings = Array.isArray(it.decision_warnings) ? it.decision_warnings.filter(x => typeof x === 'string').map(x => x.slice(0, 500)) : [];
+  clean.quantity = Math.max(1, Math.min(999, parseInt(it.quantity, 10) || 1));
+  clean.box_status = ['箱あり', '箱なし', '不明'].includes(it.box_status) ? it.box_status : '不明';
+  return clean;
+}
+function parseImport(json) {
+  if (!json || json.app !== BACKUP_APP || !Array.isArray(json.items)) throw new Error('スカウターのバックアップではありません');
+  if (json.version != null && json.version !== BACKUP_VERSION) throw new Error('バックアップの形式が対応していません');
+  const items = loadList();
+  const knownUids = new Set(items.map(it => it.uid).filter(Boolean));
+  const knownKeys = new Set(items.map(it => it.local_id + '|' + (it.created_at || '')));
+  const knownIds = new Set(items.map(it => it.local_id));
+  let added = 0, skipped = 0, remapped = 0, rejected = 0;
+  const merged = items.slice();
+  for (const raw of json.items) {
+    if (!isValidImportItem(raw)) { rejected++; continue; }
+    const it = sanitizeImportItem(raw);
+    /* 同じ商品かどうかは uid（端末ごとの固有ID）を第一に判定する。仮IDだけでは判定しない */
+    if (it.uid && knownUids.has(it.uid)) { skipped++; continue; }
+    if (!it.uid && knownKeys.has(it.local_id + '|' + (it.created_at || ''))) { skipped++; continue; }
+    if (knownIds.has(it.local_id)) {
+      /* 別端末・別バックアップの別商品が同じ仮IDを持っていた場合は、新しい仮IDを振り直して取り込む */
+      it.original_local_id = it.local_id;
+      it.local_id = nextLocalId(merged);
+      remapped++;
+    }
+    merged.push(it);
+    knownIds.add(it.local_id);
+    if (it.uid) knownUids.add(it.uid);
+    added++;
+  }
+  saveList(merged); /* 保存に失敗した場合は例外となり、既存データはそのまま残る */
+  bumpCounter(merged);
+  return { added, skipped, remapped, rejected };
+}
+
+/* ===== 共通DB（holds.json）への取り込み変換 ===== */
+function toHoldsRecord(item, sNumber) {
+  const resp = item.response || {};
+  const band = resp.ai_price_band || null;
+  const qty = Math.max(1, parseInt(item.quantity, 10) || 1);
+  const notes = ['スカウター仮ID ' + item.local_id + (item.original_local_id ? '（読み込み時に振り直し。元の仮ID ' + item.original_local_id + '）' : ''),
+    '判定理由: ' + (item.decision_reasons || []).join(' '),
+    (item.decision_warnings && item.decision_warnings.length) ? '注意: ' + item.decision_warnings.join(' ') : '',
+    item.memo ? 'メモ: ' + item.memo : ''].filter(Boolean).join('／');
+  return {
+    item_id: sNumber,
+    group_id: null,
+    case_ref: null,
+    status: '候補',
+    found_at: (item.created_at || '').slice(0, 10) || null,
+    found_place: item.found_place || null,
+    asking_price_jpy: item.asking_price_jpy != null ? item.asking_price_jpy : null,
+    quantity: qty,
+    box_status: item.box_status || '不明',
+    material: resp.material || '不明',
+    photos: { front: 'photos/holds/' + sNumber + '/front.jpg', back: 'photos/holds/' + sNumber + '/back.jpg', extra: [] },
+    observed_facts: {
+      surface: resp.pattern || '',
+      backstamp_text: resp.mark_read_chars || '',
+      backstamp_logo: resp.logo_text || '',
+      backstamp_symbol: resp.symbol_description || ''
+    },
+    identification: {
+      brand: (resp.brand_candidate && resp.brand_candidate.name) || null,
+      series: resp.series_candidate || null,
+      kiln: (resp.kiln_candidate && resp.kiln_candidate.name) || null,
+      artist: (resp.artist_candidate && resp.artist_candidate.name) || null,
+      pattern: resp.pattern || null,
+      origin: resp.origin || null,
+      era: resp.era || null
+    },
+    identification_status: { brand: '未確認', series: '未確認' },
+    identification_basis: [],
+    scout_priority: item.priority,
+    scout_judgment: {
+      over3000: 'unknown',
+      basis: 'AI参考推定のみ',
+      ai_price_band: band ? { low: band.low, high: band.high, unit: '1点' } : null,
+      ai_price_band_total: band && qty > 1 ? { low: band.low * qty, high: band.high * qty, note: '単価×数量の参考計算（セット実売価格ではない）' } : null,
+      decided_by: 'scouter-v0.1',
+      decided_at: (item.created_at || '').slice(0, 10) || null
+    },
+    ground_truth: { brand: null, series: null, confirmed_by: null, confirmed_at: null, source: null },
+    appraisal_ids: [],
+    price_ids: [],
+    brandsearch_ref: null,
+    notes,
+    created_at: (item.created_at || '').slice(0, 10) || null,
+    updated_at: (item.created_at || '').slice(0, 10) || null
+  };
+}
+
+/* ===== 画面の動作 ===== */
+function currentInput() {
+  return { quantity: $('quantity').value, box_status: $('boxStatus').value, found_place: $('foundPlace').value, asking_price: $('askingPrice').value, memo: $('memo').value };
+}
+async function onJudge() {
+  $('judgeError').textContent = '';
+  const apiKey = $('apiKey').value.trim();
+  if (!apiKey) { $('judgeError').textContent = 'APIキーを入力してください（キーは保存されません）。'; return; }
+  if (!state.frontData || !state.backData) { $('judgeError').textContent = '表面と裏面の写真を両方選んでください。'; return; }
+  if (state.busy) return;
+  state.busy = true;
+  $('judgeStatus').textContent = '判定中です…';
+  try {
+    const resp = await callGemini(apiKey, $('modelId').value, state.frontData, state.backData);
+    const input = currentInput();
+    const decision = decidePriority(resp, input);
+    state.lastResult = { resp, decision, input };
+    renderResult(resp, decision, input);
+    $('judgeStatus').textContent = '';
+  } catch (e) {
+    $('judgeError').textContent = '判定できませんでした: ' + (e && e.message ? e.message : e) + '。時間をおいて再試行してください。';
+    $('judgeStatus').textContent = '';
+  } finally { state.busy = false; }
+}
+function init() {
+  const sel = $('modelId');
+  for (const m of MODELS) {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.label;
+    sel.appendChild(opt);
+  }
+  loadWork();
+  $('photoFront').addEventListener('change', () => onPhoto('photoFront', 'previewFront', 'frontData', FRONT_MAX, FRONT_QUALITY));
+  $('photoBack').addEventListener('change', () => onPhoto('photoBack', 'previewBack', 'backData', BACK_MAX, BACK_QUALITY));
+  for (const id of ['quantity', 'boxStatus', 'foundPlace', 'askingPrice', 'memo']) $(id).addEventListener('change', saveWork);
+  $('btnJudge').addEventListener('click', onJudge);
+  $('btnSave').addEventListener('click', () => {
+    if (!state.lastResult) return;
+    const item = buildItem(state.lastResult.resp, state.lastResult.decision, state.lastResult.input);
+    const items = loadList();
+    items.push(item);
+    try { saveList(items); } catch (e) { $('saveStatus').textContent = '保存できませんでした: ' + (e && e.message ? e.message : '端末の保存容量不足の可能性があります'); return; }
+    $('saveStatus').textContent = item.local_id + ' として保存しました。';
+    renderList();
+  });
+  $('btnAgain').addEventListener('click', () => { $('screen-result').hidden = true; state.lastResult = null; window.scrollTo(0, 0); });
+  $('listFilter').addEventListener('change', renderList);
+  $('btnExport').addEventListener('click', () => {
+    const data = JSON.stringify(buildExport(), null, 1);
+    const blob = new Blob([data], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'shokki-scouter-backup-v01.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    $('backupStatus').textContent = 'バックアップを書き出しました。';
+  });
+  $('importFile').addEventListener('change', async () => {
+    const f = $('importFile').files && $('importFile').files[0];
+    if (!f) return;
+    try {
+      const json = JSON.parse(await f.text());
+      const r = parseImport(json);
+      $('backupStatus').textContent = '読み込みました（追加 ' + r.added + ' 件／重複でスキップ ' + r.skipped + ' 件／ID振り直し ' + r.remapped + ' 件／形式不正で拒否 ' + r.rejected + ' 件）。';
+      renderList();
+    } catch (e) { $('backupStatus').textContent = '読み込めませんでした: ' + (e && e.message ? e.message : e); }
+  });
+  $('btnClearList').addEventListener('click', () => {
+    let ok = false;
+    try { ok = !!window.confirm('取り置きリストをすべて消去します。よろしいですか？'); } catch (e) { ok = false; }
+    if (!ok) return; /* キャンセルした場合は何もしない */
+    saveList([]);
+    renderList();
+  });
+  renderList();
+}
+document.addEventListener('DOMContentLoaded', init);
+
+/* テスト用フック（通常の利用では使わない） */
+window.__SCOUTER__ = { decidePriority, assessCorroboration, findSpecificNames, lowPriorityExclusions, isArtistPossible, referenceNote, toHoldsRecord, nextLocalId, allocateLocalId, buildExport, parseImport, isValidImportItem, extractJson, normalizeResponse, loadList, saveList, buildItem, renderList, KEYS: { WORK_KEY, LIST_KEY, COUNTER_KEY, APP_ID }, MODELS, MARKS_REFERENCE, GENERIC_TERMS };
+</script>
+</body>
+</html>
